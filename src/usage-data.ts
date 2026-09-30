@@ -7,7 +7,7 @@ export interface UsageEvent {
 }
 
 export interface UsageDocument {
-    readonly format: 'model-currents';
+    readonly format: 'model-tides';
     readonly version: 1;
     readonly source: string;
     readonly events: UsageEvent[];
@@ -34,10 +34,10 @@ const validModel = (value: unknown): value is string =>
 /** Reject extra fields so a mistaken export can never carry message bodies or identifiers. */
 export function parseUsageDocument(input: unknown): UsageDocument {
     if (!object(input) || !onlyKeys(input, ['format', 'version', 'source', 'events']) ||
-        input.format !== 'model-currents' || input.version !== 1 ||
+        (input.format !== 'model-tides' && input.format !== 'model-currents') || input.version !== 1 ||
         typeof input.source !== 'string' || !/^[a-z][a-z0-9-]{0,31}$/.test(input.source) ||
         !Array.isArray(input.events) || input.events.length > MAX_EVENTS) {
-        throw new TypeError('Expected a Model Currents v1 metadata file.');
+        throw new TypeError('Expected a Model Tides v1 metadata file.');
     }
 
     const events: UsageEvent[] = input.events.map((raw: unknown) => {
@@ -54,5 +54,5 @@ export function parseUsageDocument(input: unknown): UsageDocument {
         throw new TypeError('The metadata file contains an invalid usage event.');
     });
 
-    return { format: 'model-currents', version: 1, source: input.source, events };
+    return { format: 'model-tides', version: 1, source: input.source, events };
 }

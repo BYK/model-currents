@@ -46,7 +46,7 @@ def export(database_path: Path) -> dict:
                 previous[session_id] = (model, message_time)
             if len(events) > MAX_EVENTS:
                 raise ValueError("Too many events")
-    return {"format": "model-currents", "version": 1, "source": "opencode", "events": events}
+    return {"format": "model-tides", "version": 1, "source": "opencode", "events": events}
 
 
 if __name__ == "__main__":

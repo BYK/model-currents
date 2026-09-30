@@ -46,5 +46,5 @@ export function extractOpenCodeUsage(database: Database): UsageDocument {
         statement.free();
     }
 
-    return parseUsageDocument({ format: 'model-currents', version: 1, source: 'opencode', events });
+    return parseUsageDocument({ format: 'model-tides', version: 1, source: 'opencode', events });
 }

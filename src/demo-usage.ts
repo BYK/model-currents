@@ -21,5 +21,5 @@ export function makeDemoUsage(): UsageDocument {
             }
         }
     }
-    return { format: 'model-currents', version: 1, source: 'example', events };
+    return { format: 'model-tides', version: 1, source: 'example', events };
 }

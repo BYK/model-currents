@@ -7,14 +7,14 @@
 }
 
 .flow-svg .chart-gridline {
-    stroke: rgba(206, 210, 216, 0.08);
+    stroke: var(--chart-grid, rgba(206, 210, 216, 0.08));
     stroke-width: 1;
     stroke-dasharray: 2 6;
 }
 
 .flow-svg .date-axis,
 .flow-svg .date-tick {
-    stroke: rgba(206, 210, 216, 0.35);
+    stroke: var(--chart-axis, rgba(206, 210, 216, 0.35));
     stroke-width: 1;
 }
 
@@ -59,7 +59,7 @@
 }
 
 .flow-svg .usage-node {
-    stroke: rgba(255, 255, 255, 0.24);
+    stroke: var(--node-outline, rgba(255, 255, 255, 0.24));
     stroke-width: 0.7;
 }
 
