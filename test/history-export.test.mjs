@@ -54,6 +54,26 @@ test('Codex rollouts count session starts and turn-context model changes once, n
     }
 });
 
+test('Codex converter skips model IDs that exceed the browser UTF-16 limit', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'tides-unicode-'));
+    try {
+        const file = join(directory, 'rollout-unicode.jsonl');
+        writeHistory(file, [
+            { timestamp: timestamp(0), type: 'session_meta', payload: {
+                id: 'private-id', timestamp: timestamp(0), source: 'cli', model_provider: 'openai',
+            } },
+            { timestamp: timestamp(1000), type: 'turn_context', payload: { model: 'gpt-5' } },
+            { timestamp: timestamp(2000), type: 'turn_context', payload: { model: '🫧'.repeat(161) } },
+            { timestamp: timestamp(3000), type: 'turn_context', payload: { model: '🫧'.repeat(160) } },
+        ]);
+        const { output, document } = exportHistory('codex', file);
+        assert.deepEqual(document.events, [{ time: start, model: 'openai/gpt-5', kind: 'session' }]);
+        assert.doesNotMatch(output, /🫧|private-id/u);
+    } finally {
+        rmSync(directory, { recursive: true, force: true });
+    }
+});
+
 test('Claude Code JSONL counts only main-thread assistant models, de-duplicates message updates, and omits transcripts', () => {
     const directory = mkdtempSync(join(tmpdir(), 'tides-claude-'));
     try {

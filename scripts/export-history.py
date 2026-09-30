@@ -36,8 +36,11 @@ def milliseconds(value):
 
 
 def valid_model(value):
-    return (isinstance(value, str) and 0 < len(value) <= 320 and value == value.strip()
-            and not any(ord(char) < 32 or ord(char) == 127 for char in value))
+    return (isinstance(value, str) and 0 < len(value) <= 320
+            and sum(2 if ord(char) > 0xFFFF else 1 for char in value) <= 320
+            and value == value.strip() and not value.startswith("\ufeff") and not value.endswith("\ufeff")
+            and not any(ord(char) < 32 or ord(char) == 127 or 0xD800 <= ord(char) <= 0xDFFF
+                        for char in value))
 
 
 def codex_model(value, provider):
