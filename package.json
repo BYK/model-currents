@@ -1,0 +1,23 @@
+{
+  "name": "model-currents",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Offline model usage timeline with local imports and shareable images.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "sql.js": "1.14.2"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.43",
+    "@types/sql.js": "1.4.11",
+    "typescript": "5.8.3",
+    "vite": "8.3.1"
+  }
+}
