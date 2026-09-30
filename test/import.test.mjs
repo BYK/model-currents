@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import initSqlJs from 'sql.js';
@@ -38,7 +39,7 @@ test('browser and local exporter agree on starts and switches without disclosing
     ]);
     assert.doesNotMatch(JSON.stringify(browserDocument), /secret|private-session-id|content/);
 
-    const directory = mkdtempSync('/tmp/opencode/model-currents-');
+    const directory = mkdtempSync(join(tmpdir(), 'model-currents-'));
     try {
         const path = join(directory, 'test.db');
         writeFileSync(path, db.export());
@@ -63,7 +64,7 @@ test('metadata v1 rejects unknown versions, transcript fields, invalid switches,
 });
 
 test('local exporter includes committed changes still held in a live WAL file', () => {
-    const directory = mkdtempSync('/tmp/opencode/model-currents-wal-');
+    const directory = mkdtempSync(join(tmpdir(), 'model-currents-wal-'));
     try {
         const path = join(directory, 'active.db');
         const script = `
