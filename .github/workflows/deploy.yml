@@ -1,4 +1,4 @@
-name: Test and deploy
+name: Test and build
 
 on:
     push:
@@ -21,23 +21,3 @@ jobs:
             - run: npm ci
             - run: npm test
             - run: npm run build
-            - uses: actions/configure-pages@v5
-              if: github.event_name != 'pull_request'
-            - uses: actions/upload-pages-artifact@v3
-              if: github.event_name != 'pull_request'
-              with:
-                  path: dist
-
-    deploy:
-        if: github.event_name != 'pull_request'
-        needs: build
-        runs-on: ubuntu-latest
-        permissions:
-            pages: write
-            id-token: write
-        environment:
-            name: github-pages
-            url: ${{ steps.deployment.outputs.page_url }}
-        steps:
-            - uses: actions/deploy-pages@v4
-              id: deployment

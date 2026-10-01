@@ -3,12 +3,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
 
+import { cloudflare } from '@cloudflare/vite-plugin';
+
 function offlineAssets(): Plugin {
     return {
         name: 'model-tides-offline-assets',
         apply: 'build',
         generateBundle(_options, bundle) {
-            const files = ['index.html', 'favicon.svg', ...Object.keys(bundle)].sort();
+            const files = ['', 'favicon.svg', ...Object.keys(bundle)].sort();
             const indexSource = readFileSync(fileURLToPath(new URL('./index.html', import.meta.url)));
             const version = createHash('sha256').update(files.join('\n')).update(indexSource).digest('hex').slice(0, 12);
             this.emitFile({
@@ -28,8 +30,12 @@ self.addEventListener('activate', (event) => {
 });
 self.addEventListener('fetch', (event) => {
     if (event.request.method !== 'GET' || new URL(event.request.url).origin !== self.location.origin) return;
-    const response = event.request.mode === 'navigate'
-        ? caches.match(new URL('index.html', self.registration.scope))
+    const requestPath = new URL(event.request.url).pathname;
+    const scopePath = new URL(self.registration.scope).pathname;
+    const appNavigation = event.request.mode === 'navigate' &&
+        (requestPath === scopePath || requestPath === scopePath + 'index.html');
+    const response = appNavigation
+        ? caches.match(self.registration.scope)
         : caches.match(event.request);
     event.respondWith(response.then((cached) => cached || fetch(event.request)));
 });`,
@@ -38,4 +44,4 @@ self.addEventListener('fetch', (event) => {
     };
 }
 
-export default defineConfig({ base: './', plugins: [offlineAssets()] });
+export default defineConfig({ base: '/', plugins: [offlineAssets(), cloudflare()] });

@@ -29,3 +29,39 @@ test('activating Model Tides preserves caches owned by other service worker scop
     await activation.promise;
     assert.deepEqual(deleted, ['model-tides-old']);
 });
+
+test('offline navigation caches the app, but lets share and API pages reach the Worker', async () => {
+    const plugin = config.plugins[0];
+    const emitted = { worker: undefined };
+    plugin.generateBundle.call({ emitFile(asset) { emitted.worker = asset.source; } }, {}, {});
+
+    const listeners = new Map();
+    const cached = { source: 'offline app', redirected: false };
+    const redirected = { source: 'redirect', redirected: true };
+    const network = { source: 'Worker' };
+    const self = {
+        location: { origin: 'https://modeltides.dev' },
+        registration: { scope: 'https://modeltides.dev/' },
+        addEventListener: (type, listener) => listeners.set(type, listener),
+    };
+    const caches = { match: async (request) => {
+        const path = new URL(request.url ?? request).pathname;
+        return path === '/' ? cached : path === '/index.html' ? redirected : undefined;
+    } };
+    const fetch = async () => network;
+    runInNewContext(emitted.worker, { self, caches, fetch, Promise, URL });
+
+    const navigate = async (path) => {
+        const event = {
+            request: { method: 'GET', mode: 'navigate', url: `https://modeltides.dev${path}` },
+            respondWith(promise) { this.response = promise; },
+        };
+        listeners.get('fetch')(event);
+        return event.response;
+    };
+
+    assert.equal(await navigate('/'), cached);
+    assert.equal((await navigate('/')).redirected, false, 'redirected HTML cannot answer a navigation');
+    assert.equal(await navigate('/u/example'), network);
+    assert.equal(await navigate('/api/aggregate'), network);
+});

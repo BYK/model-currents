@@ -1,5 +1,5 @@
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
-    void navigator.serviceWorker.register(new URL('sw.js', document.baseURI)).catch(() => {});
+    void navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
 
 void import('./model-usage').catch(() => {

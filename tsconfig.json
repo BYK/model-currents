@@ -14,5 +14,5 @@
     "allowImportingTsExtensions": true,
     "types": ["vite/client"]
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "worker", "vite.config.ts", "cloudflare.config.ts"]
 }
