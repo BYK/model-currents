@@ -457,7 +457,7 @@ function renderChart(): void {
         showModelsButton.hidden = true;
         modelLegend.replaceChildren();
         chartMessage.hidden = false;
-        chartMessage.textContent = 'Choose a database, open a metadata JSON file, or try the invented example.';
+        chartMessage.textContent = 'Choose a database, open a metadata JSON file, or use mock data.';
         chartCanvas.replaceChildren();
         chartScroll.hidden = true;
         timelineControls.hidden = true;
@@ -687,7 +687,7 @@ exampleButton.addEventListener('click', () => {
     if (state.loading) return;
     const document = makeDemoUsage();
     showDocument(document);
-    importStatus.textContent = 'Invented example loaded. This is not your usage history.';
+    importStatus.textContent = 'Mock data loaded. This is not your usage history.';
 });
 downloadExporterButton.addEventListener('click', () => {
     downloadBlob(new Blob([exporterScript], { type: 'text/x-python' }), 'export-model-tides.py');

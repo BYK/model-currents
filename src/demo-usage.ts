@@ -11,7 +11,7 @@ function sample(day: number, session: number, salt: number): number {
     return ((mixed ^ (mixed >>> 16)) >>> 0) / 0x1_0000_0000;
 }
 
-/** Invented names and dates for a shareable example; no user data enters this fixture. */
+/** Mock names and dates for a shareable example; no user data enters this fixture. */
 export function makeDemoUsage(): UsageDocument {
     const phases = [
         ['anthropic/claude-sonnet-4', 'anthropic/claude-sonnet-4', 'anthropic/claude-sonnet-4',

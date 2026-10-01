@@ -37,14 +37,14 @@ function renderRows(chart: HTMLElement, rows: AggregateRow[], example: boolean):
         displayKey: (model) => visible.has(model) ? model : 'Other models',
         colorFor: getModelColor,
         streamColorFor: (model) => getModelColor(model),
-        formatValue: (value) => `${value.toLocaleString('en-GB')} ${example ? 'invented' : 'shared'} uses`,
-        formatNodeTitle: ({ label, period, value }) => `${label} · ${period}\n${value.toLocaleString('en-GB')} ${example ? 'invented' : 'self-reported'} uses`,
-        formatLinkTitle: ({ toLabel, toPeriod, value }) => `${toLabel} · ${toPeriod}\n${value.toLocaleString('en-GB')} ${example ? 'invented' : 'self-reported'} uses`,
+        formatValue: (value) => `${value.toLocaleString('en-GB')} ${example ? 'mock' : 'shared'} uses`,
+        formatNodeTitle: ({ label, period, value }) => `${label} · ${period}\n${value.toLocaleString('en-GB')} ${example ? 'mock' : 'self-reported'} uses`,
+        formatLinkTitle: ({ toLabel, toPeriod, value }) => `${toLabel} · ${toPeriod}\n${value.toLocaleString('en-GB')} ${example ? 'mock' : 'self-reported'} uses`,
         formatContinuityTitle: ({ label, fromPeriod, toPeriod }) => `${label}: appears in ${fromPeriod} and ${toPeriod}. This does not track people between periods.`,
         axisCaption: example ? 'EARLIER ← EXAMPLE MODEL COUNTS → LATER' : 'EARLIER ← REPORTED MODEL COUNTS → LATER',
-        ariaLabel: example ? 'Invented example of weekly model counts' : 'Self-reported model counts by week, grouped into wider periods over longer histories',
+        ariaLabel: example ? 'Mock example of weekly model counts' : 'Self-reported model counts by week, grouped into wider periods over longer histories',
     });
-    chart.setAttribute('aria-label', example ? 'Invented example of weekly model counts' : 'Shared model counts over time');
+    chart.setAttribute('aria-label', example ? 'Mock example of weekly model counts' : 'Shared model counts over time');
 }
 
 export async function loadGlobalView(chart: HTMLElement, status: HTMLElement, table: HTMLElement | null, showExample = false): Promise<void> {
@@ -57,7 +57,7 @@ export async function loadGlobalView(chart: HTMLElement, status: HTMLElement, ta
             Number.isSafeInteger(row.count) && row.count > 0 && Number.isSafeInteger(row.contributors) && row.contributors >= 5);
         if (rows.length === 0) {
             status.textContent = showExample
-                ? 'Example · invented data. Public counts appear after five contributors share a model and week.'
+                ? 'Mock data · public counts appear after five contributors share a model and week.'
                 : 'No weekly model has five contributors yet. Your local history still works without sharing.';
             if (showExample) renderRows(chart, exampleRows, true);
             else chart.replaceChildren();
@@ -84,7 +84,7 @@ export async function loadGlobalView(chart: HTMLElement, status: HTMLElement, ta
             table.replaceChildren(tbody);
         }
     } catch {
-        status.textContent = showExample ? 'Shared counts are unavailable. This example uses invented data.'
+        status.textContent = showExample ? 'Shared counts are unavailable. This chart uses mock data.'
             : 'The shared timeline is unavailable. Your local history still works.';
         if (showExample) renderRows(chart, exampleRows, true);
     }
