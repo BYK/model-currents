@@ -10,9 +10,12 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test test/*.test.mjs",
-    "deploy": "cf deploy"
+    "deploy": "cf deploy",
+    "contribute": "node --experimental-strip-types scripts/contribute.mjs"
   },
   "dependencies": {
+    "@resvg/resvg-wasm": "^2.6.2",
+    "brotli-wasm": "^3.0.1",
     "sql.js": "1.14.2"
   },
   "devDependencies": {

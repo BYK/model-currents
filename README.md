@@ -2,9 +2,9 @@
 
 **Your models, over time.**
 
-[Open Model Tides](https://modeltides.dev/) — a private model-usage timeline you can share as an image.
+[Open Model Tides](https://modeltides.dev/) — explore shared weekly model counts or view your own history privately.
 
-The app runs in your browser. A Cloudflare Worker serves its static files, without an account or analytics. It never uploads your database or imported metadata. After one online visit, its built files and SQLite WASM module are available offline. Your imported data stays in the tab's memory; **Clear history** removes it.
+Your own timeline runs in your browser. It never uploads your database or imported metadata automatically. After one online visit, its built files and SQLite WASM module are available offline. Imported history stays in the tab's memory; **Clear history** removes it. The home page also reads public, self-reported weekly counts from a Cloudflare Worker. There is no account or analytics.
 
 The page follows your system's light or dark appearance. Use the theme button to switch for this visit; the share image uses the theme you see.
 
@@ -13,6 +13,26 @@ The page follows your system's light or dark appearance. Use the theme button to
 1. Open the site and click **Choose a file**. Select your OpenCode `opencode.db` (normally `~/.local/share/opencode/opencode.db` on Linux). The browser accepts databases up to 256 MB.
 2. For larger databases, or recent changes in a live SQLite `-wal` file, click **download the local exporter** on the site. In the folder containing the downloaded script, run `python3 export-model-tides.py > model-tides.json`. Open that JSON on the site. Python's standard library is the only requirement.
 3. Adjust the timeline and click **Download share image**. The PNG shows the selected model names and counts, without sharing your database or exact event timestamps. **Use mock data** previews the chart without using your history.
+
+## Share a weekly snapshot (optional)
+
+Click **Contribute weekly counts** after importing real history. Review the exact week/model/count pairs, then explicitly confirm. Only those pairs leave your browser, Brotli-compressed; no transcripts, exact event times, paths, session IDs, or imported files are sent. The response contains a public UUIDv7 link and a separate private key. Download the key immediately and keep it private. Loading it back into the site lets you replace the same weeks, rotate the key, or delete the link. The site never stores the key in browser storage.
+
+The standalone CLI will be available as `npx model-tides@0.1.0 upload` after its first npm release. It discovers OpenCode, Codex, and Claude Code locally, combines their observations, and asks you to approve the snapshot in a terminal. Until publication, the same command works from a repository checkout:
+
+```sh
+npm ci
+npm run contribute
+# Or use a metadata JSON you exported earlier:
+npm run contribute -- --input model-tides.json
+# Rotate the saved private key or delete the contribution:
+npm run contribute -- --rotate
+npm run contribute -- --delete
+```
+
+The npm package contains only the uploader, local Python converters, and metadata validator. It has no runtime npm dependencies. CLI release tags use `.github/workflows/publish-cli.yml` with npm trusted publishing; the initial release requires npm authentication and a trusted-publisher connection for later tags.
+
+The CLI stores the private replacement key in `~/.config/model-tides/contribution.json` (or under `XDG_CONFIG_HOME`) with owner-only permissions. A second upload replaces matching contributor-weeks instead of incrementing them. Public links show weekly names and counts, and have live Open Graph PNG previews. The home page shows a global timeline and full visible weekly table. Each model-week needs at least five contributors to appear in the global view; contributions are self-reported, and separate identities can upload overlapping histories. The offline local view remains available without contributing. Mock data cannot be contributed.
 
 ### Codex and Claude Code
 
@@ -38,8 +58,8 @@ npm run dev
 npm run build
 ```
 
-The build emits `dist/`, including a service worker and bundled SQLite reader. The site runs on a Cloudflare Worker with Static Assets; `worker/index.ts` serves the app and reserves `/api/`, `/u/`, and `/og/` for future server-side features. The current Worker never receives imported history. GitHub Actions runs tests and the build on pushes to `main` and on pull requests.
+The build emits `dist/`, including a service worker and bundled SQLite reader. A Cloudflare Worker serves static assets, validates opt-in weekly uploads, stores public counts in D1, renders public pages and Open Graph images, and serves aggregate counts. It never receives a database or imported metadata JSON. GitHub Actions tests pushes and pull requests.
 
-GitHub Actions tests each push and pull request; pushes to `main` deploy after the tests and build pass. Set the repository variable `CLOUDFLARE_ACCOUNT_ID` to the account that owns the Worker and the repository secret `CLOUDFLARE_API_TOKEN` to an account-scoped **Edit Cloudflare Workers** token. Run `npm run deploy` with an authenticated Cloudflare CLI for a manual deployment. `cloudflare.config.ts` configures the apex and `www` custom domains; the Worker redirects HTTP and `www` to the HTTPS apex. The timeline renderer is a dependency-free SVG module under `src/flow-svg/`.
+GitHub Actions tests each push and pull request; pushes to `main` apply D1 migrations before deploying. Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_D1_DATABASE_ID` as repository variables, and `CLOUDFLARE_API_TOKEN` (Workers editing) and `CLOUDFLARE_D1_TOKEN` (D1 editing) as separate repository secrets. With an authenticated Cloudflare CLI, apply `migrations/` before running `npm run deploy` manually. `cloudflare.config.ts` configures the production and staging D1 databases, rate limiting, and the apex and `www` domains; the Worker redirects HTTP and `www` to the HTTPS apex. The timeline renderer is a dependency-free SVG module under `src/flow-svg/`.
 
 Model Tides grew out of the [AG Studio × Information is Beautiful workshop starter](https://github.com/ag-grid/ag-studio-iib-workshop), but this repository contains the standalone visualization, with no AG Studio or AG Charts dependency.

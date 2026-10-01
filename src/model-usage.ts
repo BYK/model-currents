@@ -2,8 +2,10 @@ import './model-usage.css';
 import './flow-svg/flow-svg.css';
 import exporterScript from '../scripts/export-model-tides.py?raw';
 import historyExporterScript from '../scripts/export-history.py?raw';
+import { setupContributions } from './contribute-browser';
 import { makeDemoUsage } from './demo-usage';
 import { renderFlowSvg } from './flow-svg/renderer';
+import { loadGlobalView } from './global-view';
 import { getModelColor, OTHER_MODEL_COLOR } from './model-colors';
 import { downloadBlob, downloadShareImage } from './share-image';
 import { MAX_DATABASE_BYTES, MAX_JSON_BYTES, parseUsageDocument, type UsageDocument, type UsageEvent } from './usage-data';
@@ -27,7 +29,7 @@ root.innerHTML = `
                 <span>MODEL TIDES<span class="wordmark-dot">.</span></span>
             </a>
             <div class="masthead-actions">
-                <div class="local-badge"><span class="status-dot"></span> PRIVATE · IN YOUR BROWSER</div>
+                <div class="local-badge"><span class="status-dot"></span> PRIVATE IMPORT</div>
                 <a class="studio-link" href="#import-history">How to import <span aria-hidden="true">↓</span></a>
                 <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark theme">Dark theme</button>
             </div>
@@ -42,11 +44,24 @@ root.innerHTML = `
             <button class="refresh-button" id="import-top" type="button">Open my history</button>
         </section>
 
+        <section class="global-card" aria-labelledby="global-heading">
+            <div class="global-head">
+                <div><p class="eyebrow">SHARED, SELF-REPORTED HISTORY</p><h2 id="global-heading">Community model tides</h2></div>
+                <span class="global-mark">WEEKLY SNAPSHOTS</span>
+            </div>
+            <p id="global-status" class="global-status" role="status" aria-live="polite">Loading shared model counts…</p>
+            <div id="global-chart" class="global-chart" role="img" aria-label="Shared model counts over time"></div>
+            <p class="global-note">Each public model-week cell needs five contributors. Counts are self-reported and may include repeated or overlapping histories. This chart never uses your imported data unless you choose to share a weekly snapshot.</p>
+            <details class="global-details"><summary>View all visible weekly counts</summary>
+                <div class="global-table-scroll"><table aria-label="Shared weekly model counts"><thead><tr><th>Week of</th><th>Model</th><th>Uses</th><th>Contributors</th></tr></thead><tbody id="global-table"></tbody></table></div>
+            </details>
+        </section>
+
         <section class="import-card" id="import-history" aria-label="Import model history">
             <div>
                 <p class="eyebrow">BRING YOUR OWN DATA</p>
                 <h2>Open a database or a metadata file</h2>
-                <p>Choose an OpenCode <code>opencode.db</code> (usually <code>~/.local/share/opencode/opencode.db</code>), or a Model Tides JSON file from any harness. Older Model Currents JSON works too. Nothing is uploaded or saved here. You can also drop a file on this card.</p>
+                <p>Choose an OpenCode <code>opencode.db</code> (usually <code>~/.local/share/opencode/opencode.db</code>), or a Model Tides JSON file from any harness. Older Model Currents JSON works too. Import stays in this tab; sharing is a separate choice. You can also drop a file on this card.</p>
                 <p class="import-note">For large databases or recent changes held in a <code>-wal</code> file, <button class="inline-link" id="download-exporter" type="button">download the local exporter</button>. In its folder, run <code>python3 export-model-tides.py &gt; model-tides.json</code> and open the JSON here.</p>
                 <p class="import-note">For Codex or Claude Code, <button class="inline-link" id="download-history-exporter" type="button">download the history converter</button>. Run <code>python3 export-history.py codex &gt; model-tides.json</code> or replace <code>codex</code> with <code>claude-code</code>, then open the JSON here. Older compressed Codex histories need <code>zstd</code> installed locally.</p>
             </div>
@@ -87,6 +102,7 @@ root.innerHTML = `
                     <button class="text-button" id="show-models" type="button" hidden></button>
                     <button class="text-button" id="share-image" type="button" hidden>Download share image</button>
                     <button class="text-button" id="export-metadata" type="button" hidden>Export metadata JSON</button>
+                    <button class="text-button" id="contribute" type="button" hidden>Contribute weekly counts</button>
                     <button class="text-button" id="clear-history" type="button" hidden>Clear history</button>
                 </div>
             </div>
@@ -129,9 +145,28 @@ root.innerHTML = `
             </div>
         </section>
 
+        <dialog id="contribution-dialog" class="contribution-dialog" aria-labelledby="contribution-heading">
+            <h2 id="contribution-heading">Share weekly counts</h2>
+            <p>Review every week, model name, and count below. Only these fields from your history leave your browser. Your original history, exact event times, prompts, replies, and session IDs stay here.</p>
+            <pre id="contribution-preview" class="contribution-preview"></pre>
+            <p id="contribution-status" role="status" aria-live="polite"></p>
+            <label class="key-import">Already have a shared link? Load your private key to replace matching weeks <input id="owner-key-file" type="file" accept=".json,application/json" /></label>
+            <div id="contribution-result" hidden>
+                <p>Public link: <a id="contribution-link" target="_blank" rel="noopener noreferrer"></a></p>
+                <button id="download-owner-key" type="button" class="import-button">Download private key</button>
+                <p>Keep this file private. Import it here to replace counts at this link.</p>
+                <button id="rotate-owner-key" type="button" class="text-button">Rotate private key</button>
+                <button id="delete-contribution" type="button" class="text-button">Delete this shared link</button>
+            </div>
+            <div class="contribution-actions">
+                <button id="confirm-contribution" type="button" class="import-button">Upload these weekly counts</button>
+                <button id="close-contribution" type="button" class="text-button">Close</button>
+            </div>
+        </dialog>
+
         <footer class="footnote">
             <span class="footnote-mark">i</span>
-            <p id="footnote-copy">New sessions and model changes count as one observed usage event; repeated turns on the same model add nothing. Bright ribbons show recorded events, including within-period model switches. Faint streams connect recurring models and resize between each period’s activity; they show visual continuity, not persistent sessions. OpenCode database queries read model and timestamp metadata, plus session IDs to count starts; IDs never leave the browser. Local history converters use IDs only to avoid double-counting; IDs never enter JSON. Prompts and responses are never extracted. No imported data is sent or stored.</p>
+            <p id="footnote-copy">New sessions and model changes count as one observed usage event; repeated turns on the same model add nothing. Bright ribbons show recorded events, including within-period model switches. Faint streams connect recurring models and resize between each period’s activity; they show visual continuity, not persistent sessions. OpenCode database queries read model and timestamp metadata, plus session IDs to count starts; IDs never leave the browser. Local history converters use IDs only to avoid double-counting; IDs never enter JSON. Prompts and responses are never extracted. Import stays in this tab. If you choose to contribute, only the reviewed weekly model names and counts are uploaded.</p>
             <span class="source-label"><span class="status-dot"></span> ON-DEVICE ANALYSIS</span>
             <a class="repo-link" href="https://github.com/BYK/model-tides" target="_blank" rel="noopener noreferrer">Source on GitHub ↗</a>
         </footer>
@@ -173,6 +208,16 @@ const importStatus = root.querySelector<HTMLElement>('#import-status')!;
 const shareImageButton = root.querySelector<HTMLButtonElement>('#share-image')!;
 const exportMetadataButton = root.querySelector<HTMLButtonElement>('#export-metadata')!;
 const clearHistoryButton = root.querySelector<HTMLButtonElement>('#clear-history')!;
+const contributeButton = root.querySelector<HTMLButtonElement>('#contribute')!;
+const contributionDialog = root.querySelector<HTMLDialogElement>('#contribution-dialog')!;
+const globalChart = root.querySelector<HTMLElement>('#global-chart')!;
+const globalStatus = root.querySelector<HTMLElement>('#global-status')!;
+const globalTable = root.querySelector<HTMLElement>('#global-table')!;
+
+const refreshGlobal = () => loadGlobalView(globalChart, globalStatus, globalTable);
+void refreshGlobal();
+const contributions = setupContributions(contributeButton, contributionDialog, () => state.events, refreshGlobal);
+root.querySelector<HTMLButtonElement>('#close-contribution')!.addEventListener('click', () => contributionDialog.close());
 
 const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
 
@@ -402,6 +447,7 @@ function renderChart(): void {
     shareImageButton.hidden = !state.events.length;
     exportMetadataButton.hidden = state.document === null;
     clearHistoryButton.hidden = state.document === null;
+    contributeButton.hidden = state.document === null || state.document.source === 'example' || !state.events.length;
     if (!state.document) {
         usageTotal.textContent = '—';
         modelTotal.textContent = '—';
@@ -525,6 +571,7 @@ function renderChart(): void {
 }
 
 function showDocument(document: UsageDocument): void {
+    contributions.clearSnapshot();
     state.document = document;
     state.events = document.events;
     state.showAll = false;
@@ -649,6 +696,7 @@ downloadHistoryExporterButton.addEventListener('click', () => {
     downloadBlob(new Blob([historyExporterScript], { type: 'text/x-python' }), 'export-history.py');
 });
 clearHistoryButton.addEventListener('click', () => {
+    contributions.clearSnapshot();
     state.document = null;
     state.events = [];
     state.showAll = false;

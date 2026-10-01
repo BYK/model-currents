@@ -1,0 +1,16 @@
+{
+  "name": "model-tides",
+  "version": "0.1.0",
+  "description": "Opt-in local model usage snapshots for Model Tides",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BYK/model-tides.git"
+  },
+  "engines": { "node": ">=24" },
+  "bin": { "model-tides": "dist/scripts/contribute.mjs" },
+  "files": ["dist/", "README.md", "LICENSE"],
+  "scripts": { "prepack": "node ../scripts/package-cli.mjs" },
+  "publishConfig": { "access": "public" }
+}

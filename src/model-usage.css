@@ -140,6 +140,30 @@ h1 {
 .refresh-button.is-loading > span { animation: turn 900ms linear infinite; }
 @keyframes turn { to { transform: rotate(360deg); } }
 
+.global-card { margin-bottom: 15px; padding: 23px 25px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.global-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.global-head .eyebrow { margin-bottom: 7px; }
+.global-mark { color: var(--accent); font-size: 9px; font-weight: 700; letter-spacing: .14em; white-space: nowrap; }
+.global-status, .global-note { margin: 12px 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.global-chart { min-height: 25px; overflow: hidden; }
+.global-chart svg { display: block; width: 100%; height: auto; max-height: 440px; }
+.global-details { color: var(--accent); font-size: 11px; }
+.global-details summary { width: fit-content; padding: 6px 0; cursor: pointer; }
+.global-table-scroll { max-height: 360px; margin-top: 10px; overflow: auto; color: var(--text); }
+.global-details table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.global-details th, .global-details td { padding: 8px 12px; border-bottom: 1px solid var(--line); text-align: left; }
+.global-details td:nth-child(n+3) { font-variant-numeric: tabular-nums; text-align: right; }
+
+.contribution-dialog { width: min(720px, calc(100vw - 28px)); max-height: min(86vh, 780px); padding: 25px; overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text); box-shadow: 0 25px 90px #061c2680; }
+.contribution-dialog::backdrop { background: #071c27aa; }
+.contribution-dialog h2 { margin-bottom: 10px; }
+.contribution-dialog p, .key-import { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.contribution-preview { max-height: 300px; padding: 15px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-raised); color: var(--text); font-size: 11px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.key-import { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 15px; }
+.key-import input { max-width: 210px; font-size: 11px; }
+.contribution-dialog a { color: var(--accent); overflow-wrap: anywhere; }
+.contribution-actions { display: flex; align-items: center; gap: 18px; margin-top: 18px; }
+
 .import-card {
     display: flex;
     align-items: center;
@@ -291,6 +315,9 @@ h2 { margin-bottom: 0; font-family: Georgia, 'Times New Roman', serif; font-size
     .intro { min-height: 175px; flex-wrap: wrap; align-items: flex-start; gap: 14px; padding-top: 35px; }
     .import-card { padding: 17px; }
     .intro-copy { min-width: 0; }
+    .global-card { padding: 18px 15px; }
+    .global-mark { display: none; }
+    .global-details th, .global-details td { padding: 8px 5px; font-size: 9px; }
     h1 { font-size: clamp(38px, 11vw, 47px); }
     .dek { max-width: 290px; font-size: 12px; line-height: 1.5; }
     .refresh-button { padding: 8px 9px; font-size: 10px; }
