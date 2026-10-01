@@ -1,6 +1,6 @@
 import { downloadBlob } from './share-image';
 import type { UsageEvent } from './usage-data';
-import { buildWeeklySnapshot, type WeeklySnapshot } from './weekly-snapshot';
+import { buildWeeklySnapshot, fetchKnownModels, filterWeeklySnapshot, type WeeklySnapshot } from './weekly-snapshot';
 
 interface ContributionState {
     snapshot: WeeklySnapshot | null;
@@ -24,6 +24,7 @@ export function setupContributions(
     const remove = dialog.querySelector<HTMLButtonElement>('#delete-contribution')!;
     const keyFile = dialog.querySelector<HTMLInputElement>('#owner-key-file')!;
     const state: ContributionState = { snapshot: null, key: null };
+    const pendingPreview = { generation: 0 };
     const setBusy = (busy: boolean): void => {
         confirm.disabled = busy;
         close.disabled = busy;
@@ -35,23 +36,47 @@ export function setupContributions(
         if (close.disabled) event.preventDefault();
     });
 
-    button.addEventListener('click', () => {
+    button.addEventListener('click', async () => {
+        const generation = ++pendingPreview.generation;
+        state.snapshot = null;
+        preview.textContent = '';
+        confirm.hidden = true;
+        result.hidden = true;
+        dialog.showModal();
+        const snapshot = (() => {
+            try {
+                return buildWeeklySnapshot(getEvents());
+            } catch {
+                status.textContent = 'Cannot share this history: check its model names, dates, and weekly upload limits.';
+                return null;
+            }
+        })();
+        if (!snapshot) return;
+        if (snapshot.weeks.length === 0) {
+            status.textContent = 'No model observations to share.';
+            return;
+        }
+        status.textContent = 'Checking model names against models.dev…';
         try {
-            const snapshot = buildWeeklySnapshot(getEvents());
-            if (snapshot.weeks.length === 0) throw new Error('No model observations to share.');
-            state.snapshot = snapshot;
-            preview.textContent = snapshot.weeks.map(({ week, models }) =>
-                `Week of ${week}\n${Object.entries(models).map(([model, count]) => `  ${model}: ${count}`).join('\n')}`).join('\n\n');
+            const known = await fetchKnownModels('/api/models');
+            if (!dialog.open || generation !== pendingPreview.generation) return;
+            const reviewed = filterWeeklySnapshot(snapshot, known);
+            state.snapshot = reviewed.snapshot;
+            preview.textContent = reviewed.snapshot.weeks.map(({ week, models }) =>
+                `Week of ${week}\n${Object.entries(models).map(([model, count]) => `  ${model}: ${count}`).join('\n')}`).join('\n\n') +
+                (reviewed.excluded.length ? `\n\nNot shared (not listed on models.dev):\n${reviewed.excluded.join('\n')}` : '');
+            if (reviewed.snapshot.weeks.length === 0) {
+                status.textContent = 'No models in this history are listed on models.dev. Nothing can be shared; your history stays local.';
+                return;
+            }
             status.textContent = state.key
                 ? 'These exact counts will replace the matching weeks at your existing public link.'
                 : 'These exact counts will be public. Your original history stays in this tab.';
-            result.hidden = true;
             confirm.hidden = false;
             confirm.textContent = state.key ? 'Replace these weeks' : 'Upload these weekly counts';
-            dialog.showModal();
         } catch {
-            status.textContent = 'Cannot share this history: check its model names, dates, and weekly upload limits.';
-            dialog.showModal();
+            if (!dialog.open || generation !== pendingPreview.generation) return;
+            status.textContent = 'Could not verify these model names against models.dev. Your history remains local.';
         }
     });
 
@@ -148,5 +173,5 @@ export function setupContributions(
         } catch { status.textContent = 'Could not delete the contribution. Try again.'; }
         finally { setBusy(false); }
     });
-    return { clearSnapshot() { state.snapshot = null; dialog.close(); } };
+    return { clearSnapshot() { pendingPreview.generation++; state.snapshot = null; dialog.close(); } };
 }

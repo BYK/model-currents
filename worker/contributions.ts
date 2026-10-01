@@ -1,5 +1,6 @@
 import { brotliDecompressSync } from 'node:zlib';
 import { FUTURE_MARGIN_MS, MAX_CELLS, MAX_MODEL_COUNT, MAX_WEEKS, MIN_WEEK_TIME, WEEKLY_FORMAT, WEEKLY_VERSION, validWeeklyModel, weekStart, type WeeklySnapshot } from '../src/weekly-snapshot.ts';
+import { knownModels } from './models-registry.ts';
 
 export interface Statement {
     bind(...values: (string | number)[]): Statement;
@@ -168,7 +169,17 @@ export async function getAggregate(db: Database): Promise<{
     return { weeks: results.slice(0, 3000), truncated: results.length > 3000 };
 }
 
-export async function handleContributions(request: Request, db: Database, limit: UploadLimit, path: string): Promise<Response> {
+export async function handleContributions(
+    request: Request, db: Database, limit: UploadLimit, path: string,
+    getKnownModels: () => Promise<ReadonlySet<string>> = knownModels,
+): Promise<Response> {
+    if (path === '/api/models' && request.method === 'GET') {
+        try {
+            return response({ models: [...await getKnownModels()].sort() });
+        } catch {
+            return response({ error: 'Model verification unavailable. Try again later.' }, 503);
+        }
+    }
     if (path === '/api/aggregate' && request.method === 'GET') {
         return response({ ...await getAggregate(db), note: 'Self-reported; cells with fewer than five contributors are hidden.' });
     }
@@ -220,6 +231,14 @@ export async function handleContributions(request: Request, db: Database, limit:
     const snapshot = await readSnapshot(request);
     if (snapshot instanceof Response) return snapshot;
     const entries = rows(snapshot);
+    try {
+        const models = await getKnownModels();
+        if (entries.some(({ model }) => !models.has(model))) {
+            return response({ error: 'Some models are not listed on models.dev. Nothing was shared.' }, 422);
+        }
+    } catch {
+        return response({ error: 'Model verification unavailable. Try again later.' }, 503);
+    }
     if (isCreate) {
         const createdId = uuidv7();
         const secret = newToken();

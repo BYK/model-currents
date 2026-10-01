@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { brotliCompressSync } from 'node:zlib';
 import { parseUsageDocument, MAX_JSON_BYTES } from '../src/usage-data.ts';
-import { buildWeeklySnapshot } from '../src/weekly-snapshot.ts';
+import { buildWeeklySnapshot, fetchKnownModels, filterWeeklySnapshot } from '../src/weekly-snapshot.ts';
 
 const scripts = new URL('.', import.meta.url);
 const api = 'https://modeltides.dev/api/contributions';
@@ -132,15 +132,18 @@ async function main() {
     const sources = option === '--input' ? [{ name: 'metadata file', path: args[1] }] : collectSources();
     if (!sources.length) throw new Error('No supported harness history was found. Use --input for an existing metadata JSON.');
     if (option === '--input' && !regular(sources[0].path)) throw new Error('Input must be a regular metadata JSON file.');
-    const snapshot = option === '--input'
+    const localSnapshot = option === '--input'
         ? snapshotFromDocuments([readMetadata(readFileSync(sources[0].path))])
         : exportLocal(sources);
-    if (snapshot.weeks.length === 0) throw new Error('No model observations found.');
+    if (localSnapshot.weeks.length === 0) throw new Error('No model observations found.');
+    const { snapshot, excluded } = filterWeeklySnapshot(localSnapshot, await fetchKnownModels('https://modeltides.dev/api/models'));
     console.log(`Found ${sources.map(({ name }) => name).join(', ')}. The following weekly counts would be shared:`);
     for (const { week, models } of snapshot.weeks) {
         console.log(`Week of ${week}`);
         for (const [model, count] of Object.entries(models)) console.log(`  ${model}: ${count}`);
     }
+    if (excluded.length) console.log(`Not shared (not listed on models.dev): ${excluded.join(', ')}`);
+    if (snapshot.weeks.length === 0) throw new Error('No models listed on models.dev were found in this history. Nothing was shared.');
     console.log('Only the displayed weeks, model names, and counts are uploaded. No prompts, replies, paths, exact times, or session IDs.');
     if (!await confirm(owner ? 'Replace these weeks in your existing shared link?' : 'Create a public contribution and save its private key locally?')) return;
     const result = await publishSnapshot(snapshot, owner);

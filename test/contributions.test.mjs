@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { brotliCompressSync } from 'node:zlib';
-import { handleContributions, parseSnapshot } from '../worker/contributions.ts';
-import { buildWeeklySnapshot } from '../src/weekly-snapshot.ts';
+import { handleContributions as handleRealContributions, parseSnapshot } from '../worker/contributions.ts';
+import { buildWeeklySnapshot, fetchKnownModels, filterWeeklySnapshot } from '../src/weekly-snapshot.ts';
 
 function database() {
     const sqlite = new DatabaseSync(':memory:');
@@ -51,6 +51,9 @@ const snapshot = (count = 2) => ({
     weeks: [{ week: '2026-09-28', models: { 'anthropic/claude-sonnet': count } }],
 });
 const limit = { async limit() { return { success: true }; } };
+const knownModels = new Set(['anthropic/claude-sonnet', 'openai/gpt-5']);
+const handleContributions = (request, db, throttle, path) =>
+    handleRealContributions(request, db, throttle, path, async () => knownModels);
 
 function upload(data, pathname = '/api/contributions', method = 'POST', token) {
     const bytes = brotliCompressSync(Buffer.from(JSON.stringify(data)));
@@ -97,6 +100,63 @@ test('reject unsupported schemas, extra fields, bad weeks, excessive counts, and
         { ...valid, weeks: [{ week: '2026-09-28', models: { ok: 1 }, transcript: 'private' }] },
         { ...valid, weeks: [...valid.weeks, ...valid.weeks] },
     ]) assert.throws(() => parseSnapshot(invalid), TypeError);
+});
+
+test('only listed model names enter the reviewed snapshot; unlisted names remain local', () => {
+    const input = { ...snapshot(), weeks: [{ week: '2026-09-28', models: {
+        'anthropic/claude-sonnet': 2, 'openai/gpt-5': 1, 'custom/fake-model': 3,
+    } }] };
+    const { snapshot: reviewed, excluded } = filterWeeklySnapshot(input, knownModels);
+    assert.deepEqual(reviewed.weeks, [{ week: '2026-09-28', models: {
+        'anthropic/claude-sonnet': 2, 'openai/gpt-5': 1,
+    } }]);
+    assert.deepEqual(excluded, ['custom/fake-model']);
+    const allUnlisted = filterWeeklySnapshot({ ...snapshot(), weeks: [{
+        week: '2026-09-28', models: { 'custom/fake-model': 3 },
+    }] }, knownModels);
+    assert.deepEqual(allUnlisted.snapshot.weeks, []);
+    assert.deepEqual(allUnlisted.excluded, ['custom/fake-model']);
+});
+
+test('the preview fetches the public registry without sending local model names', async () => {
+    const requests = [];
+    const known = await fetchKnownModels('/api/models', async (url, options) => {
+        requests.push({ url, options });
+        return Response.json({ models: ['openai/gpt-5', 'anthropic/claude-sonnet'] });
+    });
+    assert.equal(known.has('openai/gpt-5'), true);
+    assert.deepEqual(requests, [{ url: '/api/models', options: { cache: 'no-store' } }]);
+    await assert.rejects(fetchKnownModels('/api/models', async () => Response.json({
+        models: ['openai/gpt-5', 'openai/gpt-5'],
+    })), /Invalid model registry/);
+});
+
+test('direct writes reject unlisted models and registry outages before changing counts', async () => {
+    const db = database();
+    try {
+        const unknown = { ...snapshot(), weeks: [{ week: '2026-09-28', models: {
+            'anthropic/claude-sonnet': 1, 'custom/fake-model': 1,
+        } }] };
+        const create = await handleContributions(upload(unknown), db, limit, '/api/contributions');
+        assert.equal(create.status, 422);
+        assert.equal((await db.prepare('SELECT count(*) AS count FROM contributors').first()).count, 0);
+        const unavailable = await handleRealContributions(upload(snapshot()), db, limit, '/api/contributions',
+            async () => { throw new Error('upstream error with private details'); });
+        assert.equal(unavailable.status, 503);
+        assert.equal(JSON.stringify(await unavailable.json()).includes('private details'), false);
+        const listed = await handleContributions(new Request('https://modeltides.dev/api/models'), db, limit, '/api/models');
+        assert.equal(listed.status, 200);
+        assert.deepEqual((await listed.json()).models, [...knownModels].sort());
+
+        const created = await handleContributions(upload(snapshot()), db, limit, '/api/contributions');
+        const { id, token } = await created.json();
+        const replace = await handleContributions(upload(unknown, `/api/contributions/${id}`, 'PUT', token),
+            db, limit, `/api/contributions/${id}`);
+        assert.equal(replace.status, 422);
+        const after = await handleContributions(new Request(`https://modeltides.dev/api/contributions/${id}`),
+            db, limit, `/api/contributions/${id}`);
+        assert.deepEqual((await after.json()).counts, [{ week: '2026-09-28', model: 'anthropic/claude-sonnet', count: 2 }]);
+    } finally { db.close(); }
 });
 
 test('Brotli upload creates a public link; replacing weeks does not add duplicate counts', async () => {

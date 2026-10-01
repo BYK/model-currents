@@ -22,6 +22,7 @@ test('the Worker serves app assets and keeps future dynamic routes out of static
     assert.deepEqual(requests, ['https://modeltides.dev/', 'https://modeltides.dev/assets/image.svg']);
     const missingBinding = await worker.fetch(new Request('https://modeltides.dev/api/aggregate'), env);
     assert.equal(missingBinding.status, 503);
+    assert.equal((await worker.fetch(new Request('https://modeltides.dev/api/models'), env)).status, 503);
 });
 
 test('the Worker redirects www and refuses writes to static paths', async () => {

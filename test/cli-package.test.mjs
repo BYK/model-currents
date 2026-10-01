@@ -30,7 +30,14 @@ test('npm package includes the local converters, metadata validator, and command
             format: 'model-tides', version: 1, source: 'test',
             events: [{ time: Date.UTC(2026, 8, 28), kind: 'session', model: 'openai/gpt-5' }],
         }));
-        const review = execFileSync('node', [bin, 'upload', '--input', file], {
+        const interceptor = join(directory, 'registry.mjs');
+        writeFileSync(interceptor, `globalThis.fetch = async (url, options) => {
+            if (url !== 'https://modeltides.dev/api/models' || options?.body || options?.method) {
+                throw new Error('Unexpected request during offline CLI packaging test.');
+            }
+            return Response.json({ models: ['openai/gpt-5'] });
+        };`);
+        const review = execFileSync('node', ['--import', interceptor, bin, 'upload', '--input', file], {
             cwd: directory, encoding: 'utf8', input: 'NO\n',
             env: { ...process.env, HOME: directory, XDG_CONFIG_HOME: directory },
         });
