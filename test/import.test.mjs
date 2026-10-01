@@ -39,11 +39,11 @@ test('browser and local exporter agree on starts and switches without disclosing
     ]);
     assert.doesNotMatch(JSON.stringify(browserDocument), /secret|private-session-id|content/);
 
-    const directory = mkdtempSync(join(tmpdir(), 'model-currents-'));
+    const directory = mkdtempSync(join(tmpdir(), 'model-tides-'));
     try {
         const path = join(directory, 'test.db');
         writeFileSync(path, db.export());
-        const output = execFileSync('python3', ['scripts/export-model-currents.py', path], { encoding: 'utf8' });
+        const output = execFileSync('python3', ['scripts/export-model-tides.py', path], { encoding: 'utf8' });
         assert.deepEqual(parseUsageDocument(JSON.parse(output)), browserDocument);
         assert.doesNotMatch(output, /secret|private-session-id|content/);
     } finally {
@@ -53,9 +53,11 @@ test('browser and local exporter agree on starts and switches without disclosing
 });
 
 test('metadata v1 rejects unknown versions, transcript fields, invalid switches, and oversized dates', () => {
-    const good = { format: 'model-currents', version: 1, source: 'other-agent',
+    const good = { format: 'model-tides', version: 1, source: 'other-agent',
         events: [{ kind: 'session', time: firstTime, model: 'provider/model' }] };
     assert.deepEqual(parseUsageDocument(good), good);
+    assert.deepEqual(parseUsageDocument({ ...good, format: 'model-currents' }), good);
+    assert.throws(() => parseUsageDocument({ ...good, format: 'unrelated' }), /v1/);
     assert.throws(() => parseUsageDocument({ ...good, version: 2 }), /v1/);
     assert.throws(() => parseUsageDocument({ ...good, transcript: 'private' }), /v1/);
     assert.throws(() => parseUsageDocument({ ...good, events: [{ ...good.events[0], content: 'private' }] }), /invalid usage event/);
@@ -64,7 +66,7 @@ test('metadata v1 rejects unknown versions, transcript fields, invalid switches,
 });
 
 test('local exporter includes committed changes still held in a live WAL file', () => {
-    const directory = mkdtempSync(join(tmpdir(), 'model-currents-wal-'));
+    const directory = mkdtempSync(join(tmpdir(), 'model-tides-wal-'));
     try {
         const path = join(directory, 'active.db');
         const script = `
@@ -80,7 +82,7 @@ db.commit()
 print(subprocess.check_output(['python3', sys.argv[2], sys.argv[1]], text=True))
 db.close()
 `;
-        const output = execFileSync('python3', ['-c', script, path, 'scripts/export-model-currents.py'], { encoding: 'utf8' });
+        const output = execFileSync('python3', ['-c', script, path, 'scripts/export-model-tides.py'], { encoding: 'utf8' });
         const document = parseUsageDocument(JSON.parse(output));
         assert.equal(document.events.length, 1);
         assert.deepEqual(document.events[0], { kind: 'session', time: firstTime, model: 'anthropic/claude-sonnet-4' });

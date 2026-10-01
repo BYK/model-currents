@@ -1,6 +1,7 @@
 import './model-usage.css';
 import './flow-svg/flow-svg.css';
-import exporterScript from '../scripts/export-model-currents.py?raw';
+import exporterScript from '../scripts/export-model-tides.py?raw';
+import historyExporterScript from '../scripts/export-history.py?raw';
 import { makeDemoUsage } from './demo-usage';
 import { renderFlowSvg } from './flow-svg/renderer';
 import { getModelColor, OTHER_MODEL_COLOR } from './model-colors';
@@ -21,19 +22,22 @@ if (!root) {
 root.innerHTML = `
     <main class="usage-app">
         <header class="masthead">
-            <a class="wordmark" href="#" aria-label="Model currents home">
-                <span class="wordmark-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-                <span>CURRENTS<span class="wordmark-dot">.</span></span>
+            <a class="wordmark" href="#" aria-label="Model Tides home">
+                <svg class="wordmark-mark" viewBox="0 0 32 24" fill="none" aria-hidden="true"><path d="M1 7c4-4 8-4 12 0s8 4 12 0 6-3 7-2M1 16c4-4 8-4 12 0s8 4 12 0 6-3 7-2" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" /></svg>
+                <span>MODEL TIDES<span class="wordmark-dot">.</span></span>
             </a>
-            <div class="local-badge"><span class="status-dot"></span> PRIVATE · IN YOUR BROWSER</div>
-            <a class="studio-link" href="#import-history">How to import <span aria-hidden="true">↓</span></a>
+            <div class="masthead-actions">
+                <div class="local-badge"><span class="status-dot"></span> PRIVATE · IN YOUR BROWSER</div>
+                <a class="studio-link" href="#import-history">How to import <span aria-hidden="true">↓</span></a>
+                <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark theme">Dark theme</button>
+            </div>
         </header>
 
         <section class="intro">
             <div class="intro-copy">
-                <p class="eyebrow">MODEL USAGE / YOUR DATA</p>
-                <h1>Model currents</h1>
-                <p class="dek">Follow model usage over time. Your data stays in this browser.</p>
+                <p class="eyebrow">A CLEARER VIEW OF YOUR MODEL HISTORY</p>
+                <h1>Model Tides<span class="title-wave" aria-hidden="true"> ~</span></h1>
+                <p class="dek">Your models, over time.</p>
             </div>
             <button class="refresh-button" id="import-top" type="button">Open my history</button>
         </section>
@@ -42,8 +46,9 @@ root.innerHTML = `
             <div>
                 <p class="eyebrow">BRING YOUR OWN DATA</p>
                 <h2>Open a database or a metadata file</h2>
-                <p>Choose an OpenCode <code>opencode.db</code> (usually <code>~/.local/share/opencode/opencode.db</code>), or a Model Currents JSON file from any harness. Nothing is uploaded or saved here. You can also drop a file on this card.</p>
-                <p class="import-note">For large databases or recent changes held in a <code>-wal</code> file, <button class="inline-link" id="download-exporter" type="button">download the local exporter</button>. In its folder, run <code>python3 export-model-currents.py &gt; model-currents.json</code> and open the JSON here.</p>
+                <p>Choose an OpenCode <code>opencode.db</code> (usually <code>~/.local/share/opencode/opencode.db</code>), or a Model Tides JSON file from any harness. Older Model Currents JSON works too. Nothing is uploaded or saved here. You can also drop a file on this card.</p>
+                <p class="import-note">For large databases or recent changes held in a <code>-wal</code> file, <button class="inline-link" id="download-exporter" type="button">download the local exporter</button>. In its folder, run <code>python3 export-model-tides.py &gt; model-tides.json</code> and open the JSON here.</p>
+                <p class="import-note">For Codex or Claude Code, <button class="inline-link" id="download-history-exporter" type="button">download the history converter</button>. Run <code>python3 export-history.py codex &gt; model-tides.json</code> or replace <code>codex</code> with <code>claude-code</code>, then open the JSON here. Older compressed Codex histories need <code>zstd</code> installed locally.</p>
             </div>
             <div class="import-actions">
                 <input id="history-file" type="file" accept=".db,.sqlite,.sqlite3,.json,application/json" hidden />
@@ -86,12 +91,12 @@ root.innerHTML = `
                 </div>
             </div>
 
-            <div class="legend" id="chart-legend" aria-label="Chart legend">
+            <div class="legend" id="chart-legend" role="group" aria-label="Chart legend">
                 <span class="legend-item"><i class="legend-line"></i>Bright ribbons = observed starts and switches</span>
                 <span class="legend-item"><i class="legend-continuity"></i>Faint streams = same model, resized per period</span>
                 <span class="legend-item legend-note">One event per new session or model change</span>
             </div>
-            <div class="model-legend" id="model-legend" aria-label="Model colors"></div>
+            <div class="model-legend" id="model-legend" role="group" aria-label="Model colors"></div>
 
             <div class="chart-frame" id="chart-frame">
                 <div class="chart-scroll" id="chart-scroll">
@@ -108,7 +113,7 @@ root.innerHTML = `
                     </div>
                     <div class="timeline-head-actions">
                         <div class="date-pair"><span id="from-date">—</span><span class="date-arrow">→</span><span id="to-date">—</span></div>
-                        <div class="zoom-actions" aria-label="Timeline zoom controls">
+                        <div class="zoom-actions" role="group" aria-label="Timeline zoom controls">
                             <button class="zoom-button" id="zoom-out" type="button" aria-label="Zoom out" title="Zoom out">−</button>
                             <button class="zoom-button" id="zoom-in" type="button" aria-label="Zoom in" title="Zoom in">+</button>
                             <button class="text-button" id="zoom-reset" type="button">Reset</button>
@@ -126,7 +131,7 @@ root.innerHTML = `
 
         <footer class="footnote">
             <span class="footnote-mark">i</span>
-            <p id="footnote-copy">New sessions and model changes count as one observed usage event; repeated turns on the same model add nothing. Bright ribbons show recorded events, including within-period model switches. Faint streams connect recurring models and resize between each period’s activity; they show visual continuity, not persistent sessions. OpenCode database queries read model and timestamp metadata, plus session IDs to count starts; IDs never leave the browser. Prompts and responses are never extracted. No imported data is sent or stored.</p>
+            <p id="footnote-copy">New sessions and model changes count as one observed usage event; repeated turns on the same model add nothing. Bright ribbons show recorded events, including within-period model switches. Faint streams connect recurring models and resize between each period’s activity; they show visual continuity, not persistent sessions. OpenCode database queries read model and timestamp metadata, plus session IDs to count starts; IDs never leave the browser. Local history converters use IDs only to avoid double-counting; IDs never enter JSON. Prompts and responses are never extracted. No imported data is sent or stored.</p>
             <span class="source-label"><span class="status-dot"></span> ON-DEVICE ANALYSIS</span>
         </footer>
     </main>
@@ -159,12 +164,33 @@ const historyFile = root.querySelector<HTMLInputElement>('#history-file')!;
 const importTopButton = root.querySelector<HTMLButtonElement>('#import-top')!;
 const chooseHistoryButton = root.querySelector<HTMLButtonElement>('#choose-history')!;
 const exampleButton = root.querySelector<HTMLButtonElement>('#try-example')!;
+const themeToggleButton = root.querySelector<HTMLButtonElement>('#theme-toggle')!;
 const downloadExporterButton = root.querySelector<HTMLButtonElement>('#download-exporter')!;
+const downloadHistoryExporterButton = root.querySelector<HTMLButtonElement>('#download-history-exporter')!;
 const importCard = root.querySelector<HTMLElement>('#import-history')!;
 const importStatus = root.querySelector<HTMLElement>('#import-status')!;
 const shareImageButton = root.querySelector<HTMLButtonElement>('#share-image')!;
 const exportMetadataButton = root.querySelector<HTMLButtonElement>('#export-metadata')!;
 const clearHistoryButton = root.querySelector<HTMLButtonElement>('#clear-history')!;
+
+const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
+
+function updateThemeToggle(): void {
+    const isDark = document.documentElement.dataset.theme === 'dark' ||
+        (document.documentElement.dataset.theme !== 'light' && systemTheme.matches);
+    themeToggleButton.textContent = isDark ? 'Light theme' : 'Dark theme';
+    themeToggleButton.setAttribute('aria-label', `Switch to ${isDark ? 'light' : 'dark'} theme`);
+    const themeMeta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    if (themeMeta) themeMeta.content = isDark ? '#102832' : '#eef6f5';
+}
+
+themeToggleButton.addEventListener('click', () => {
+    document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'dark' ||
+        (!document.documentElement.dataset.theme && systemTheme.matches) ? 'light' : 'dark';
+    updateThemeToggle();
+});
+systemTheme.addEventListener('change', updateThemeToggle);
+updateThemeToggle();
 
 const state: {
     events: ModelEvent[];
@@ -561,7 +587,7 @@ async function loadFile(file: File): Promise<void> {
         importStatus.textContent = `${formatCount(document.events.length)} events loaded from ${document.source}. Data stays in this tab.${isJson ? '' : ' For recent WAL changes, use the local export script.'}`;
     } catch (error) {
         importStatus.textContent = error instanceof SyntaxError || error instanceof TypeError
-            ? 'Invalid metadata file. Use a Model Currents v1 JSON file, or choose an OpenCode .db file.'
+            ? 'Invalid metadata file. Use a Model Tides v1 JSON file, or choose an OpenCode .db file.'
             : error instanceof Error ? error.message : 'Could not open this file.';
     } finally {
         state.loading = false;
@@ -616,7 +642,10 @@ exampleButton.addEventListener('click', () => {
     importStatus.textContent = 'Invented example loaded. This is not your usage history.';
 });
 downloadExporterButton.addEventListener('click', () => {
-    downloadBlob(new Blob([exporterScript], { type: 'text/x-python' }), 'export-model-currents.py');
+    downloadBlob(new Blob([exporterScript], { type: 'text/x-python' }), 'export-model-tides.py');
+});
+downloadHistoryExporterButton.addEventListener('click', () => {
+    downloadBlob(new Blob([historyExporterScript], { type: 'text/x-python' }), 'export-history.py');
 });
 clearHistoryButton.addEventListener('click', () => {
     state.document = null;
@@ -626,7 +655,7 @@ clearHistoryButton.addEventListener('click', () => {
     renderChart();
 });
 exportMetadataButton.addEventListener('click', () => {
-    if (state.document) downloadBlob(new Blob([JSON.stringify(state.document)], { type: 'application/json' }), 'model-currents.json');
+    if (state.document) downloadBlob(new Blob([JSON.stringify(state.document)], { type: 'application/json' }), 'model-tides.json');
 });
 shareImageButton.addEventListener('click', () => {
     const svg = chartCanvas.querySelector<SVGSVGElement>('svg.flow-svg');

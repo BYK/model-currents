@@ -1,4 +1,4 @@
-export const OTHER_MODEL_COLOR = '#9ba6b5';
+export const OTHER_MODEL_COLOR = '#728b93';
 
 const providerPalette = [
     '#6677bd',
@@ -37,8 +37,8 @@ export function getModelColor(model: string): string {
 
     if (hasAny(tokens, 'claude', 'anthropic') || hasAny(providerTokens, 'anthropic')) {
         if (tokens.has('opus')) return '#c45c2a';
-        if (tokens.has('sonnet')) return '#e58438';
-        if (tokens.has('haiku')) return '#efb84f';
+        if (tokens.has('sonnet')) return '#c37035';
+        if (tokens.has('haiku')) return '#b2802f';
         return '#d7753b';
     }
 

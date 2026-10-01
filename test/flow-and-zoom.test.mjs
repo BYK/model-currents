@@ -135,7 +135,7 @@ test('grouped model streams keep their family colors while the aggregate node st
         streamColorFor: (model) => getModelColor(model),
     });
 
-    assert.equal((svg.match(/class="usage-node"[^>]*fill="#9ba6b5"/g) ?? []).length, 2);
+    assert.equal((svg.match(/class="usage-node"[^>]*fill="#728b93"/g) ?? []).length, 2);
     const continuityColors = [...svg.matchAll(/class="continuity-ribbon"[^>]*fill="([^"]+)"/g)].map((match) => match[1]).sort();
     assert.deepEqual(continuityColors, [
         getModelColor('anthropic/claude-opus-4'),

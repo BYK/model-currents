@@ -5,16 +5,16 @@ import { defineConfig, type Plugin } from 'vite';
 
 function offlineAssets(): Plugin {
     return {
-        name: 'model-currents-offline-assets',
+        name: 'model-tides-offline-assets',
         apply: 'build',
         generateBundle(_options, bundle) {
-            const files = ['index.html', ...Object.keys(bundle)].sort();
+            const files = ['index.html', 'favicon.svg', ...Object.keys(bundle)].sort();
             const indexSource = readFileSync(fileURLToPath(new URL('./index.html', import.meta.url)));
             const version = createHash('sha256').update(files.join('\n')).update(indexSource).digest('hex').slice(0, 12);
             this.emitFile({
                 type: 'asset',
                 fileName: 'sw.js',
-                source: `const CACHE = 'model-currents-${version}';
+                source: `const CACHE = 'model-tides-${version}';
 const FILES = ${JSON.stringify(files)};
 self.addEventListener('install', (event) => {
     event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(FILES.map((file) => new URL(file, self.registration.scope)))));
@@ -22,7 +22,7 @@ self.addEventListener('install', (event) => {
 });
 self.addEventListener('activate', (event) => {
     event.waitUntil(Promise.all([
-        caches.keys().then((keys) => Promise.all(keys.filter((key) => key.startsWith('model-currents-') && key !== CACHE).map((key) => caches.delete(key)))),
+        caches.keys().then((keys) => Promise.all(keys.filter((key) => key.startsWith('model-tides-') && key !== CACHE).map((key) => caches.delete(key)))),
         self.clients.claim(),
     ]));
 });
