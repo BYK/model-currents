@@ -1,4 +1,4 @@
-name: Test and build
+name: Test and deploy
 
 on:
     push:
@@ -8,6 +8,10 @@ on:
 
 permissions:
     contents: read
+
+concurrency:
+    group: model-tides-${{ github.ref }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
     build:
@@ -21,3 +25,12 @@ jobs:
             - run: npm ci
             - run: npm test
             - run: npm run build
+            - name: Deploy to Cloudflare
+              if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+              env:
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+              run: |
+                  test -n "$CLOUDFLARE_API_TOKEN" || { echo 'Configure the CLOUDFLARE_API_TOKEN secret to deploy.' >&2; exit 1; }
+                  test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo 'Configure the CLOUDFLARE_ACCOUNT_ID variable to deploy.' >&2; exit 1; }
+                  npm run deploy

@@ -264,6 +264,8 @@ h2 { margin-bottom: 0; font-family: Georgia, 'Times New Roman', serif; font-size
 .footnote p { max-width: 850px; flex: 1; margin: 1px 16px 0 0; color: var(--muted); font-size: 10px; line-height: 1.55; }
 .source-label { flex: 0 0 auto; padding-top: 2px; color: var(--muted); font-size: 8px; }
 .source-label .status-dot { width: 5px; height: 5px; }
+.repo-link { flex: 0 0 auto; color: var(--muted); font-size: 10px; text-decoration: none; }
+.repo-link:hover { color: var(--teal); }
 
 @media (min-width: 1500px) {
     .usage-app { padding-right: 72px; padding-left: 72px; }

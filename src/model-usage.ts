@@ -133,6 +133,7 @@ root.innerHTML = `
             <span class="footnote-mark">i</span>
             <p id="footnote-copy">New sessions and model changes count as one observed usage event; repeated turns on the same model add nothing. Bright ribbons show recorded events, including within-period model switches. Faint streams connect recurring models and resize between each period’s activity; they show visual continuity, not persistent sessions. OpenCode database queries read model and timestamp metadata, plus session IDs to count starts; IDs never leave the browser. Local history converters use IDs only to avoid double-counting; IDs never enter JSON. Prompts and responses are never extracted. No imported data is sent or stored.</p>
             <span class="source-label"><span class="status-dot"></span> ON-DEVICE ANALYSIS</span>
+            <a class="repo-link" href="https://github.com/BYK/model-tides" target="_blank" rel="noopener noreferrer">Source on GitHub ↗</a>
         </footer>
     </main>
 `;
