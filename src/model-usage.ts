@@ -53,7 +53,7 @@ root.innerHTML = `
             <div class="import-actions">
                 <input id="history-file" type="file" accept=".db,.sqlite,.sqlite3,.json,application/json" hidden />
                 <button class="import-button" id="choose-history" type="button">Choose a file</button>
-                <button class="text-button" id="try-example" type="button">Try invented data</button>
+                <button class="text-button" id="try-example" type="button">Use mock data</button>
                 <span id="import-status" role="status" aria-live="polite">No file selected</span>
             </div>
         </section>

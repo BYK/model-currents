@@ -69,7 +69,7 @@ export async function downloadShareImage(svg: SVGSVGElement, count: string, date
         const siteUrl = new URL('./', window.location.href);
         const site = window.location.protocol === 'https:'
             ? siteUrl.host + siteUrl.pathname
-            : 'byk.im/model-tides/';
+            : 'modeltides.dev/';
         context.fillText(site, 1540, 993);
 
         const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(

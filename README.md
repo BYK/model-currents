@@ -2,7 +2,7 @@
 
 **Your models, over time.**
 
-[Open Model Tides](https://byk.im/model-tides/) — a private model-usage timeline you can share as an image. `modeltides.dev` will become the home once DNS is connected.
+[Open Model Tides](https://modeltides.dev/) — a private model-usage timeline you can share as an image.
 
 The app is static and runs in your browser. It has no account, backend or analytics. It never uploads your database or imported metadata. After one online visit, its built files and SQLite WASM module are available offline. Your imported data stays in the tab's memory; **Clear history** removes it.
 
@@ -12,7 +12,7 @@ The page follows your system's light or dark appearance. Use the theme button to
 
 1. Open the site and click **Choose a file**. Select your OpenCode `opencode.db` (normally `~/.local/share/opencode/opencode.db` on Linux). The browser accepts databases up to 256 MB.
 2. For larger databases, or recent changes in a live SQLite `-wal` file, click **download the local exporter** on the site. In the folder containing the downloaded script, run `python3 export-model-tides.py > model-tides.json`. Open that JSON on the site. Python's standard library is the only requirement.
-3. Adjust the timeline and click **Download share image**. The PNG shows the selected model names and counts, without sharing your database or exact event timestamps. **Try invented data** previews the chart without using your history.
+3. Adjust the timeline and click **Download share image**. The PNG shows the selected model names and counts, without sharing your database or exact event timestamps. **Use mock data** previews the chart without using your history.
 
 ### Codex and Claude Code
 
