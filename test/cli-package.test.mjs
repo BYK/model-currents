@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,11 @@ import test from 'node:test';
 const root = fileURLToPath(new URL('../', import.meta.url));
 
 test('npm package includes the local converters, metadata validator, and command, without the app or Worker', () => {
+    const app = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+    const cli = JSON.parse(readFileSync(join(root, 'cli/package.json'), 'utf8'));
+    assert.equal(app.private, true, 'never publish the site source as the CLI');
+    assert.equal(cli.name, 'model-tides');
+    assert.deepEqual(cli.bin, { 'model-tides': 'dist/scripts/contribute.mjs' });
     const output = execFileSync('npm', ['pack', './cli', '--dry-run', '--json'], { cwd: root, encoding: 'utf8' });
     const [packageInfo] = JSON.parse(output);
     const names = packageInfo.files.map((file) => file.path).sort();
@@ -18,6 +23,7 @@ test('npm package includes the local converters, metadata validator, and command
         'dist/src/usage-data.js', 'dist/src/weekly-snapshot.js', 'package.json',
     ]);
     assert.equal(packageInfo.name, 'model-tides');
+    assert.equal(packageInfo.version, cli.version);
     const directory = mkdtempSync(join(tmpdir(), 'model-tides-bin-'));
     try {
         const bin = join(directory, 'model-tides');
