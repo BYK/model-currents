@@ -10,15 +10,15 @@ The page follows your system's light or dark appearance. Use the theme button to
 
 ## Get started
 
-1. Open the site and click **Choose a file**. Select your OpenCode `opencode.db` (normally `~/.local/share/opencode/opencode.db` on Linux). The browser accepts databases up to 256 MB.
-2. For larger databases, or recent changes in a live SQLite `-wal` file, click **download the local exporter** on the site. In the folder containing the downloaded script, run `python3 export-model-tides.py > model-tides.json`. Open that JSON on the site. Python's standard library is the only requirement.
+1. Open the [private timeline](https://modeltides.dev/local/) and click **Choose a file**. Select your OpenCode `opencode.db` (normally `~/.local/share/opencode/opencode.db` on Linux). The browser accepts databases up to 256 MB.
+2. For larger databases, or recent changes in a live SQLite `-wal` file, click **download the local exporter** there. In the folder containing the downloaded script, run `python3 export-model-tides.py > model-tides.json`. Open that JSON in the private timeline. Python's standard library is the only requirement.
 3. Adjust the timeline and click **Download share image**. The PNG shows the selected model names and counts, without sharing your database or exact event timestamps. **Use mock data** previews the chart without using your history.
 
 ## Share a weekly snapshot (optional)
 
-Click **Contribute weekly counts** after importing real history. The site checks model names against [models.dev](https://models.dev/) without sending it your model names or history. Names missing from its current catalog stay in your private view and are shown as excluded before you confirm. Review the exact week/model/count pairs, then explicitly confirm. Only those pairs leave your browser, Brotli-compressed; no transcripts, exact event times, paths, session IDs, or imported files are sent. The Worker checks the names again before storing them. The response contains a public UUIDv7 link and a separate private key. Download the key immediately and keep it private. Loading it back into the site lets you replace the same weeks, rotate the key, or delete the link. The site never stores the key in browser storage.
+Run `npx model-tides@1.0.1 upload` to discover local OpenCode, Codex, and Claude Code history. The CLI shows the exact weekly model counts and asks you to type `YES` before sharing anything. Alternatively, click **Contribute weekly counts** after importing real history into the [private timeline](https://modeltides.dev/local/). Both routes check model names against [models.dev](https://models.dev/) without sending it your model names or history. Names missing from its current catalog stay local and are shown as excluded before you confirm. Only the reviewed week/model/count pairs leave your device, Brotli-compressed; no transcripts, exact event times, paths, session IDs, or imported files are sent. The Worker checks the names again before storing them. The response contains a public UUIDv7 link and a separate private key. Download the key immediately and keep it private. Loading it back into the site lets you replace the same weeks, rotate the key, or delete the link. The site never stores the key in browser storage.
 
-The standalone CLI will be available as `npx model-tides@0.1.0 upload` after its first npm release. It discovers OpenCode, Codex, and Claude Code locally, combines their observations, and asks you to approve the snapshot in a terminal. Until publication, the same command works from a repository checkout:
+The same local uploader also runs from a repository checkout:
 
 ```sh
 npm ci
@@ -30,9 +30,9 @@ npm run contribute -- --rotate
 npm run contribute -- --delete
 ```
 
-The npm package contains only the uploader, local Python converters, and metadata validator. It has no runtime npm dependencies. CLI release tags use `.github/workflows/publish-cli.yml` with npm trusted publishing; the initial release requires npm authentication and a trusted-publisher connection for later tags.
+The npm package contains only the uploader, local Python converters, and metadata validator. It has no runtime npm dependencies. CLI release tags use `.github/workflows/publish-cli.yml` with npm trusted publishing once the trusted-publisher connection is configured.
 
-The CLI stores the private replacement key in `~/.config/model-tides/contribution.json` (or under `XDG_CONFIG_HOME`) with owner-only permissions. A second upload replaces matching contributor-weeks instead of incrementing them. Public links show weekly names and counts, and have live Open Graph PNG previews. The home page shows a global timeline and full visible weekly table. Each model-week needs at least five contributors to appear in the global view; contributions are self-reported, and separate identities can upload overlapping histories. The offline local view remains available without contributing. Mock data cannot be contributed.
+The CLI stores the private replacement key in `~/.config/model-tides/contribution.json` (or under `XDG_CONFIG_HOME`) with owner-only permissions. A second upload replaces matching contributor-weeks instead of incrementing them. Public links show weekly names and counts, and have live Open Graph PNG previews. The home page shows a global timeline; each model-week needs at least five contributors to appear. Contributions are self-reported, and separate identities can upload overlapping histories. The offline local view remains available without contributing. Mock data cannot be contributed.
 
 ### Codex and Claude Code
 

@@ -24,12 +24,12 @@ if (!root) {
 root.innerHTML = `
     <main class="usage-app">
         <header class="masthead">
-            <a class="wordmark" href="#" aria-label="Model Tides home">
+            <a class="wordmark" href="/" aria-label="Model Tides home">
                 <svg class="wordmark-mark" viewBox="0 0 32 24" fill="none" aria-hidden="true"><path d="M1 7c4-4 8-4 12 0s8 4 12 0 6-3 7-2M1 16c4-4 8-4 12 0s8 4 12 0 6-3 7-2" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" /></svg>
                 <span>MODEL TIDES<span class="wordmark-dot">.</span></span>
             </a>
             <div class="masthead-actions">
-                <div class="local-badge"><span class="status-dot"></span> PRIVATE IMPORT</div>
+                <div class="local-badge"><span class="status-dot"></span> PRIVATE VIEW</div>
                 <a class="studio-link" href="#import-history">How to import <span aria-hidden="true">↓</span></a>
                 <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark theme">Dark theme</button>
             </div>

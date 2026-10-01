@@ -19,7 +19,7 @@ async function home(request: Request, env: Env): Promise<Response> {
         const aggregate = await getAggregate(env.DB);
         const total = aggregate.weeks.reduce((sum, row) => sum + row.count, 0);
         const title = total ? `${total.toLocaleString('en-GB')} shared model uses · Model Tides` : 'Model Tides — Your models, over time.';
-        const description = 'Self-reported weekly model counts; cells with fewer than five contributors are hidden. Import your own history locally.';
+        const description = 'See model use over time. Explore shared weekly counts, or review your own history and choose whether to share.';
         const origin = new URL(request.url).origin;
         const meta = `<meta property="og:type" content="website"><meta property="og:title" content="${escapeHtml(title)}">
 <meta property="og:description" content="${escapeHtml(description)}"><meta property="og:url" content="${origin}/">
@@ -78,6 +78,9 @@ export default {
             return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
         }
 
+        if (url.pathname === '/local' || url.pathname === '/local/') {
+            return env.ASSETS.fetch(new Request(new URL('/', url), request));
+        }
         return url.pathname === '/' && request.method === 'GET' ? home(request, env) : env.ASSETS.fetch(request);
     },
 };
