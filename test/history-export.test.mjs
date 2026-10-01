@@ -198,7 +198,7 @@ test('a live partial final record is ignored, but a malformed complete record ab
         const invalid = spawnSync('python3', [script, 'codex', file], { encoding: 'utf8' });
         assert.notEqual(invalid.status, 0);
         assert.equal(invalid.stdout, '');
-        assert.match(invalid.stderr, /Could not export model metadata/);
+        assert.match(invalid.stderr, /record.*malformed/i);
         assert.doesNotMatch(invalid.stderr, /private|rollout-partial/i);
     } finally {
         rmSync(directory, { recursive: true, force: true });
@@ -213,7 +213,7 @@ test('export fails without model observations and never follows a supplied histo
         const empty = spawnSync('python3', [script, 'claude-code', file], { encoding: 'utf8' });
         assert.notEqual(empty.status, 0);
         assert.equal(empty.stdout, '');
-        assert.match(empty.stderr, /Could not export model metadata/);
+        assert.match(empty.stderr, /No model observations found/);
         assert.doesNotMatch(empty.stderr, /private|session.jsonl|prompt/i);
 
         const link = join(directory, 'linked.jsonl');

@@ -24,6 +24,14 @@ class MissingZstd(ValueError):
     pass
 
 
+class MalformedRecord(ValueError):
+    pass
+
+
+class NoModelObservations(ValueError):
+    pass
+
+
 def milliseconds(value):
     if not isinstance(value, str) or not TIMESTAMP.fullmatch(value):
         return None
@@ -91,7 +99,7 @@ def records(path):
                     # malformed lines would hide model changes, so fail closed.
                     if path.suffix != ".zst" and not line.endswith(b"\n") and not stream.read(1):
                         break
-                    raise ValueError("Malformed history record") from error
+                    raise MalformedRecord from error
                 if isinstance(value, dict):
                     yield value
         if process is not None and process.wait() != 0:
@@ -247,7 +255,7 @@ def export(source, root):
             if session is not None:
                 append_events(events, *session)
     if not events:
-        raise ValueError("No model observations")
+        raise NoModelObservations
     events.sort(key=lambda event: event["time"])
     result = json.dumps({"format": "model-tides", "version": 1, "source": source,
                          "events": events}, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
@@ -266,6 +274,12 @@ if __name__ == "__main__":
         sys.stdout.buffer.write(export(source, root))
     except MissingZstd:
         print("Compressed Codex history requires zstd. Install it locally and retry.", file=sys.stderr)
+        sys.exit(1)
+    except MalformedRecord:
+        print("A complete history record is malformed. Nothing was exported.", file=sys.stderr)
+        sys.exit(1)
+    except NoModelObservations:
+        print("No model observations found in this history.", file=sys.stderr)
         sys.exit(1)
     except (OSError, ValueError):
         print("Could not export model metadata. Check the local history path and JSONL format.", file=sys.stderr)

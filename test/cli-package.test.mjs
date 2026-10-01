@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { parseUsageDocument } from '../src/usage-data.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
@@ -50,5 +51,22 @@ test('npm package includes the local converters, metadata validator, and command
         assert.match(review, /Week of 2026-09-28\s+openai\/gpt-5: 1/);
         assert.match(review, /Type YES to confirm/);
         assert.doesNotMatch(review, /Public link:/);
+
+        const history = join(directory, '.codex/sessions/2025/01/01');
+        mkdirSync(history, { recursive: true });
+        writeFileSync(join(history, 'rollout-test.jsonl'), [
+            { timestamp: '2025-01-01T00:00:00Z', type: 'session_meta', payload: { id: 'private-id', timestamp: '2025-01-01T00:00:00Z' } },
+            { timestamp: '2025-01-01T00:00:01Z', type: 'turn_context', payload: { model: 'gpt-5', content: 'private prompt' } },
+        ].map(JSON.stringify).join('\n') + '\n');
+        const exportPath = join(directory, 'export.json');
+        const saved = execFileSync('node', [bin, 'export', '--output', exportPath], {
+            cwd: directory, encoding: 'utf8', env: { ...process.env, HOME: directory, XDG_CONFIG_HOME: directory },
+        });
+        assert.match(saved, /modeltides\.dev\/local\//);
+        const exported = readFileSync(exportPath, 'utf8');
+        assert.deepEqual(parseUsageDocument(JSON.parse(exported)).events, [
+            { time: Date.UTC(2025, 0, 1), model: 'openai/gpt-5', kind: 'session' },
+        ]);
+        assert.doesNotMatch(exported, /private|prompt|content|session_meta/i);
     } finally { rmSync(directory, { recursive: true, force: true }); }
 });
