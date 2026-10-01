@@ -1,0 +1,23 @@
+minVersion: '2.31.2'
+changelog:
+    policy: auto
+versioning:
+    policy: auto
+preReleaseCommand: node scripts/bump-cli-version.mjs
+statusProvider:
+    name: github
+    config:
+        contexts:
+            - Build
+artifactProvider:
+    name: github
+    config:
+        artifacts:
+            CI: npm-tarball
+targets:
+    - name: npm
+      access: public
+      oidc: true
+      includeNames: /^model-tides-\d.*\.tgz$/
+    - name: github
+      includeNames: /^model-tides-\d.*\.tgz$/
