@@ -40,6 +40,6 @@ npm run build
 
 The build emits `dist/`, including a service worker and bundled SQLite reader. The site runs on a Cloudflare Worker with Static Assets; `worker/index.ts` serves the app and reserves `/api/`, `/u/`, and `/og/` for future server-side features. The current Worker never receives imported history. GitHub Actions runs tests and the build on pushes to `main` and on pull requests.
 
-Cloudflare Workers Builds deploys pushes to `main` with build command `npm ci && npm test && npm run build` and deploy command `npm run deploy`. To deploy locally with the Cloudflare CLI, run `npm run deploy`. `cloudflare.config.ts` configures the apex and `www` custom domains; the Worker redirects `www` to the HTTPS apex. The timeline renderer is a dependency-free SVG module under `src/flow-svg/`.
+Run `npm run deploy` with an authenticated Cloudflare CLI to publish the Worker. GitHub Actions tests pushes to `main`; automatic Cloudflare builds are not yet configured. `cloudflare.config.ts` configures the apex and `www` custom domains; the Worker redirects HTTP and `www` to the HTTPS apex. The timeline renderer is a dependency-free SVG module under `src/flow-svg/`.
 
 Model Tides grew out of the [AG Studio × Information is Beautiful workshop starter](https://github.com/ag-grid/ag-studio-iib-workshop), but this repository contains the standalone visualization, with no AG Studio or AG Charts dependency.

@@ -28,6 +28,10 @@ test('the Worker redirects www and refuses writes to static paths', async () => 
     assert.equal(redirect.status, 308);
     assert.equal(redirect.headers.get('Location'), 'https://modeltides.dev/u/id?view=1');
 
+    const insecure = await worker.fetch(new Request('http://modeltides.dev/u/id?view=1'), env);
+    assert.equal(insecure.status, 308);
+    assert.equal(insecure.headers.get('Location'), 'https://modeltides.dev/u/id?view=1');
+
     const write = await worker.fetch(new Request('https://modeltides.dev/', { method: 'POST' }), env);
     assert.equal(write.status, 405);
     assert.equal(write.headers.get('Allow'), 'GET, HEAD');
