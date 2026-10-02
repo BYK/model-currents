@@ -216,9 +216,12 @@ export async function handleContributions(
     if (isShare || isUnshare) {
         const published = isShare ? 1 : 0;
         const sql = isShare
-            ? 'UPDATE contributors SET published = ?, updated_at = ?, report_revision = report_revision + 1 WHERE id = ? AND token_hash = ? AND report_revision = ?'
+            ? `UPDATE contributors SET published = ?, updated_at = ?, report_revision = report_revision + 1
+                WHERE id = ? AND token_hash = ? AND report_revision = ?
+                AND (SELECT COUNT(*) FROM (SELECT 1 FROM weekly_counts WHERE contributor_id = ? LIMIT ?)) BETWEEN 1 AND ?`
             : 'UPDATE contributors SET published = ?, updated_at = ?, report_revision = report_revision + 1 WHERE id = ? AND token_hash = ?';
-        const result = await db.prepare(sql).bind(published, now, id!, hash!, ...(isShare ? [Number(reviewed)] : [])).run();
+        const result = await db.prepare(sql).bind(published, now, id!, hash!, ...(isShare
+            ? [Number(reviewed), id!, MAX_REVIEW_CELLS + 1, MAX_REVIEW_CELLS] : [])).run();
         if (result.meta.changes !== 1) return response({ error: 'Report changed. Review all counts before sharing.' }, 409);
         return response({ id, published: isShare, ...(isShare ? { url: `${new URL(request.url).origin}/u/${id}` } : {}) });
     }
@@ -236,20 +239,29 @@ export async function handleContributions(
         return response({ id: createdId, published: false, token: secret }, 201);
     }
     const weeks = snapshot.weeks.map(({ week }) => week);
-    const retained = await db.prepare(`SELECT COUNT(*) AS cells, COUNT(DISTINCT week) AS weeks FROM weekly_counts
-        WHERE contributor_id = ? AND week NOT IN (${weeks.map(() => '?').join(', ')})`)
-        .bind(id!, ...weeks).first<{ cells: number; weeks: number }>();
-    if (!retained || retained.cells + entries.length > MAX_CELLS || retained.weeks + weeks.length > MAX_WEEKS) {
+    const exceedsStoredLimit = async (): Promise<boolean> => {
+        const retained = await db.prepare(`SELECT COUNT(*) AS cells, COUNT(DISTINCT week) AS weeks FROM weekly_counts
+            WHERE contributor_id = ? AND week NOT IN (${weeks.map(() => '?').join(', ')})`)
+            .bind(id!, ...weeks).first<{ cells: number; weeks: number }>();
+        if (!retained) throw new Error('Could not check stored report size.');
+        return retained.cells + entries.length > MAX_CELLS || retained.weeks + weeks.length > MAX_WEEKS;
+    };
+    if (await exceedsStoredLimit()) {
         return response({ error: 'Stored report exceeds the weekly count limit.' }, 413);
     }
-    const result = await db.batch([
+    const statements = [
         db.prepare('UPDATE contributors SET updated_at = ?, report_revision = report_revision + 1 WHERE id = ? AND token_hash = ? AND published = ?')
             .bind(now, id!, hash!, expectedPublished),
         db.prepare(`DELETE FROM weekly_counts WHERE contributor_id = ? AND week IN (${weeks.map(() => '?').join(', ')})
             AND EXISTS (SELECT 1 FROM contributors WHERE id = ? AND token_hash = ? AND published = ?)`)
             .bind(id!, ...weeks, id!, hash!, expectedPublished),
         ...insertRows(db, id!, entries, hash!, expectedPublished),
-    ]);
+    ];
+    const result = await db.batch(statements).catch(async (error: unknown) => {
+        if (await exceedsStoredLimit()) return null;
+        throw error;
+    });
+    if (!result) return response({ error: 'Stored report exceeds the weekly count limit.' }, 413);
     if (result[0].meta.changes !== 1) return response({ error: 'Report visibility changed. Review before replacing.' }, 409);
     const current = await db.prepare('SELECT published FROM contributors WHERE id = ? AND token_hash = ?')
         .bind(id!, hash!).first<{ published: number }>();

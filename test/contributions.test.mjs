@@ -399,6 +399,37 @@ test('stored weeks cannot exceed 520 across valid uploads', async () => {
     } finally { db.close(); }
 });
 
+test('a concurrent replacement that fills the last stored cell rejects the other upload without a service error', async () => {
+    const db = database();
+    try {
+        const models = Object.fromEntries(Array.from({ length: 2047 }, (_, index) => [`model/${index}`, 1]));
+        const initial = { ...snapshot(), weeks: [{ week: '2026-09-28', models }] };
+        const { id, token } = await (await handleContributions(upload(initial), db, limit,
+            '/api/contributions/private')).json();
+        const path = `/api/contributions/${id}`;
+        const waiting = Promise.withResolvers();
+        const resume = Promise.withResolvers();
+        const delayed = {
+            prepare: (sql) => db.prepare(sql),
+            async batch(statements) { waiting.resolve(); await resume.promise; return db.batch(statements); },
+        };
+        const next = (week, model) => ({ ...snapshot(), weeks: [{ week, models: { [model]: 1 } }] });
+        const rejected = handleContributions(upload(next('2026-09-14', 'model/rejected'), path, 'PUT', token),
+            delayed, limit, path);
+        try {
+            await waiting.promise;
+            assert.equal((await handleContributions(upload(next('2026-09-21', 'model/accepted'), path, 'PUT', token),
+                db, limit, path)).status, 200);
+        } finally { resume.resolve(); }
+        assert.equal((await rejected).status, 413);
+        assert.deepEqual({ ...await db.prepare('SELECT COUNT(*) AS cells FROM weekly_counts WHERE contributor_id = ?')
+            .bind(id).first() }, { cells: 2048 });
+        assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM weekly_counts WHERE contributor_id = ? AND model = ?')
+            .bind(id, 'model/rejected').first()).count, 0);
+        assert.equal((await db.prepare('SELECT report_revision FROM contributors WHERE id = ?').bind(id).first()).report_revision, 1);
+    } finally { db.close(); }
+});
+
 test('an oversized migrated report returns only a bounded owner summary and can still be hidden', async () => {
     const db = database(false);
     try {
@@ -419,6 +450,13 @@ test('an oversized migrated report returns only a bounded owner summary and can 
         assert.equal((await handleContributions(new Request(`https://modeltides.dev${path}/unshare`, {
             method: 'POST', headers: { Authorization: `Bearer ${token}` },
         }), db, limit, `${path}/unshare`)).status, 200);
+        const revision = (await db.prepare('SELECT report_revision FROM contributors WHERE id = ?').bind(id).first()).report_revision;
+        assert.equal((await handleContributions(new Request(`https://modeltides.dev${path}/share`, {
+            method: 'POST', headers: { Authorization: `Bearer ${token}`,
+                'X-Model-Tides-Reviewed-Revision': String(revision) },
+        }), db, limit, `${path}/share`)).status, 409,
+        'a summary without stored counts cannot authorize publication');
+        assert.equal((await getReport(db, id)), null);
         assert.equal((await db.prepare('SELECT count(*) AS count FROM weekly_counts WHERE contributor_id = ?')
             .bind(id).first()).count, 8193);
     } finally { db.close(); }
