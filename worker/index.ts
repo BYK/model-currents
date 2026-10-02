@@ -78,7 +78,7 @@ export default {
             return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
         }
 
-        if (url.pathname === '/local' || url.pathname === '/local/') {
+        if (url.pathname === '/local' || url.pathname === '/local/' || url.pathname === '/gist' || url.pathname === '/gist/') {
             return env.ASSETS.fetch(new Request(new URL('/', url), request));
         }
         return url.pathname === '/' && request.method === 'GET' ? home(request, env) : env.ASSETS.fetch(request);

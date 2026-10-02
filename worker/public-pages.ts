@@ -28,11 +28,11 @@ export function summarize(id: string | null, counts: readonly CountRow[]): Publi
 }
 
 export async function getReport(db: Database, id: string): Promise<PublicReport | null> {
-    const exists = await db.prepare('SELECT id FROM contributors WHERE id = ?').bind(id).first<{ id: string }>();
-    if (!exists) return null;
-    const { results } = await db.prepare('SELECT week, model, count FROM weekly_counts WHERE contributor_id = ? ORDER BY week, model')
+    const { results } = await db.prepare(`SELECT w.week, w.model, w.count FROM contributors c
+        JOIN weekly_counts w ON w.contributor_id = c.id
+        WHERE c.id = ? AND c.published = 1 ORDER BY w.week, w.model`)
         .bind(id).all<CountRow>();
-    return summarize(id, results);
+    return results.length ? summarize(id, results) : null;
 }
 
 export function escapeHtml(text: string | number): string {

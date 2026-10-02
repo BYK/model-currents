@@ -63,6 +63,10 @@ test('offline navigation caches the app, but lets share and API pages reach the 
     assert.equal(await navigate('/'), cached);
     assert.equal((await navigate('/')).redirected, false, 'redirected HTML cannot answer a navigation');
     assert.equal(await navigate('/local/'), cached, 'the private timeline stays available offline');
+    assert.equal(await navigate('/gist'), cached, 'the gist viewer shell stays available offline without caching gist contents');
     assert.equal(await navigate('/u/example'), network);
     assert.equal(await navigate('/api/aggregate'), network);
+    const external = { request: { method: 'GET', mode: 'cors', url: 'https://api.github.com/gists/00000000000000000000000000000000' },
+        respondWith() { throw new Error('GitHub requests must not be intercepted by the site cache'); } };
+    listeners.get('fetch')(external);
 });

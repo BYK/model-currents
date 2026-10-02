@@ -102,7 +102,8 @@ root.innerHTML = `
                     <button class="text-button" id="show-models" type="button" hidden></button>
                     <button class="text-button" id="share-image" type="button" hidden>Download share image</button>
                     <button class="text-button" id="export-metadata" type="button" hidden>Export metadata JSON</button>
-                    <button class="text-button" id="contribute" type="button" hidden>Contribute weekly counts</button>
+                    <button class="text-button" id="contribute" type="button" hidden>Upload weekly counts</button>
+                    <button class="text-button" id="manage-contribution" type="button">Manage contribution</button>
                     <button class="text-button" id="clear-history" type="button" hidden>Clear history</button>
                 </div>
             </div>
@@ -146,17 +147,21 @@ root.innerHTML = `
         </section>
 
         <dialog id="contribution-dialog" class="contribution-dialog" aria-labelledby="contribution-heading">
-            <h2 id="contribution-heading">Share weekly counts</h2>
-            <p>Review every week, model name, and count below before sharing. Your original history, exact event times, prompts, replies, and session IDs stay here.</p>
+            <h2 id="contribution-heading">Upload weekly counts</h2>
+            <p>Review every week, model name, and count below before uploading. New personal reports start private. Replacing weeks in an already shared report makes the reviewed counts public immediately. Your original history, exact event times, prompts, replies, and session IDs stay here.</p>
             <pre id="contribution-preview" class="contribution-preview"></pre>
             <p id="contribution-status" role="status" aria-live="polite"></p>
-            <label class="key-import">Already have a shared link? Load your private key to replace matching weeks <input id="owner-key-file" type="file" accept=".json,application/json" /></label>
+            <label class="key-import">Already uploaded counts? Load your private key to manage or replace them <input id="owner-key-file" type="file" accept=".json,application/json" /></label>
             <div id="contribution-result" hidden>
-                <p>Public link: <a id="contribution-link" target="_blank" rel="noopener noreferrer"></a></p>
+                <p id="contribution-public" hidden>Public link: <a id="contribution-link" target="_blank" rel="noopener noreferrer"></a></p>
                 <button id="download-owner-key" type="button" class="import-button">Download private key</button>
-                <p>Keep this file private. Import it here to replace counts at this link.</p>
+                <p>Keep this file private. Import it here to manage your contribution.</p>
+                <p>Before sharing, review every stored week, model, and count below. Older weeks remain even when you replace other weeks.</p>
+                <pre id="stored-counts" class="contribution-preview" hidden></pre>
+                <button id="share-contribution" type="button" class="text-button">Share personal report</button>
+                <button id="unshare-contribution" type="button" class="text-button" hidden>Hide personal report</button>
                 <button id="rotate-owner-key" type="button" class="text-button">Rotate private key</button>
-                <button id="delete-contribution" type="button" class="text-button">Delete this shared link</button>
+                <button id="delete-contribution" type="button" class="text-button">Delete contribution</button>
             </div>
             <div class="contribution-actions">
                 <button id="confirm-contribution" type="button" class="import-button">Upload these weekly counts</button>
@@ -209,6 +214,7 @@ const shareImageButton = root.querySelector<HTMLButtonElement>('#share-image')!;
 const exportMetadataButton = root.querySelector<HTMLButtonElement>('#export-metadata')!;
 const clearHistoryButton = root.querySelector<HTMLButtonElement>('#clear-history')!;
 const contributeButton = root.querySelector<HTMLButtonElement>('#contribute')!;
+const manageContributionButton = root.querySelector<HTMLButtonElement>('#manage-contribution')!;
 const contributionDialog = root.querySelector<HTMLDialogElement>('#contribution-dialog')!;
 const globalChart = root.querySelector<HTMLElement>('#global-chart')!;
 const globalStatus = root.querySelector<HTMLElement>('#global-status')!;
@@ -216,7 +222,8 @@ const globalTable = root.querySelector<HTMLElement>('#global-table')!;
 
 const refreshGlobal = () => loadGlobalView(globalChart, globalStatus, globalTable);
 void refreshGlobal();
-const contributions = setupContributions(contributeButton, contributionDialog, () => state.events, refreshGlobal);
+const contributions = setupContributions(contributeButton, manageContributionButton, contributionDialog,
+    () => state.document && state.document.source !== 'example' ? state.events : [], refreshGlobal);
 root.querySelector<HTMLButtonElement>('#close-contribution')!.addEventListener('click', () => contributionDialog.close());
 
 const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');

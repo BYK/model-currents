@@ -1,5 +1,8 @@
 import { brotliDecompressSync } from 'node:zlib';
-import { FUTURE_MARGIN_MS, MAX_CELLS, MAX_MODEL_COUNT, MAX_WEEKS, MIN_WEEK_TIME, WEEKLY_FORMAT, WEEKLY_VERSION, validWeeklyModel, weekStart, type WeeklySnapshot } from '../src/weekly-snapshot.ts';
+import { MAX_CELLS, MAX_REVIEW_CELLS, MAX_WEEKS, parseSnapshot, type WeeklySnapshot } from '../src/weekly-snapshot.ts';
+export { parseSnapshot } from '../src/weekly-snapshot.ts';
+
+const storedLimitTrigger = 'MODEL_TIDES_STORED_REPORT_LIMIT';
 
 export interface Statement {
     bind(...values: (string | number)[]): Statement;
@@ -21,51 +24,12 @@ const compressedLimit = 64 * 1024;
 const expandedLimit = 512 * 1024;
 const contributionId = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const tokenPattern = /^Bearer ([A-Za-z0-9_-]{43})$/;
-const weekPattern = /^\d{4}-\d{2}-\d{2}$/;
 
 function response(body: unknown, status = 200): Response {
     return new Response(JSON.stringify(body), {
         status,
         headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' },
     });
-}
-
-function exactKeys(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
-    return value !== null && typeof value === 'object' && !Array.isArray(value) &&
-        Object.keys(value).length === keys.length && Object.keys(value).every((key) => keys.includes(key));
-}
-
-export function parseSnapshot(input: unknown): WeeklySnapshot {
-    if (!exactKeys(input, ['format', 'version', 'weeks']) || input.format !== WEEKLY_FORMAT ||
-        input.version !== WEEKLY_VERSION || !Array.isArray(input.weeks) ||
-        input.weeks.length < 1 || input.weeks.length > MAX_WEEKS) {
-        throw new TypeError('Invalid weekly snapshot.');
-    }
-    const seen = new Set<string>();
-    const weeks: { week: string; models: Record<string, number> }[] = [];
-    const latest = Date.now() + FUTURE_MARGIN_MS;
-    const cells = input.weeks.reduce<number>((total, item: unknown) => {
-        if (!exactKeys(item, ['week', 'models']) || typeof item.week !== 'string' ||
-            !weekPattern.test(item.week) || seen.has(item.week) || !item.models ||
-            typeof item.models !== 'object' || Array.isArray(item.models)) {
-            throw new TypeError('Invalid weekly snapshot.');
-        }
-        const date = Date.parse(`${item.week}T00:00:00Z`);
-        if (!Number.isFinite(date) || date < MIN_WEEK_TIME || date > latest ||
-            weekStart(date) !== item.week) {
-            throw new TypeError('Invalid weekly snapshot.');
-        }
-        const entries = Object.entries(item.models);
-        if (entries.length > MAX_CELLS || entries.some(([model, count]) =>
-            !validWeeklyModel(model) || !Number.isSafeInteger(count) || (count as number) < 1 || (count as number) > MAX_MODEL_COUNT)) {
-            throw new TypeError('Invalid weekly snapshot.');
-        }
-        seen.add(item.week);
-        weeks.push({ week: item.week, models: Object.fromEntries(entries) });
-        return total + entries.length;
-    }, 0);
-    if (cells < 1 || cells > MAX_CELLS) throw new TypeError('Invalid weekly snapshot.');
-    return { format: WEEKLY_FORMAT, version: WEEKLY_VERSION, weeks };
 }
 
 function uuidv7(): string {
@@ -134,17 +98,18 @@ function rows(snapshot: WeeklySnapshot): { week: string; model: string; count: n
         Object.entries(models).map(([model, count]) => ({ week, model, count })));
 }
 
-function insertRows(db: Database, id: string, entries: ReturnType<typeof rows>, hash?: string): Statement[] {
+function insertRows(db: Database, id: string, entries: ReturnType<typeof rows>, hash?: string, expectedPublished?: number): Statement[] {
     const statements: Statement[] = [];
     for (let start = 0; start < entries.length; start += 50) {
         const slice = entries.slice(start, start + 50);
         const values = slice.flatMap((entry) => [entry.week, entry.model, entry.count]);
         if (hash) {
+            if (expectedPublished !== 0 && expectedPublished !== 1) throw new TypeError('Expected report visibility.');
             const sql = `WITH input(week, model, count) AS (VALUES ${slice.map(() => '(?, ?, ?)').join(', ')})
                 INSERT INTO weekly_counts (contributor_id, week, model, count)
                 SELECT ?, week, model, count FROM input WHERE EXISTS
-                (SELECT 1 FROM contributors WHERE id = ? AND token_hash = ?)`;
-            statements.push(db.prepare(sql).bind(...values, id, id, hash));
+                (SELECT 1 FROM contributors WHERE id = ? AND token_hash = ? AND published = ?)`;
+            statements.push(db.prepare(sql).bind(...values, id, id, hash, expectedPublished));
         } else {
             const sql = `INSERT INTO weekly_counts (contributor_id, week, model, count) VALUES ${slice.map(() => '(?, ?, ?, ?)').join(', ')}`;
             statements.push(db.prepare(sql).bind(...slice.flatMap((entry) => [id, entry.week, entry.model, entry.count])));
@@ -175,28 +140,59 @@ export async function handleContributions(
         return response({ ...await getAggregate(db), note: 'Self-reported; cells with fewer than five contributors are hidden.' });
     }
 
-    const match = /^\/api\/contributions\/([^/]+)(\/rotate)?$/.exec(path);
-    if (path !== '/api/contributions' && !match) return response({ error: 'Not found.' }, 404);
-    const id = match?.[1];
+    const privateCreatePath = '/api/contributions/private';
+    const match = /^\/api\/contributions\/([^/]+)(\/(?:rotate|share|unshare))?$/.exec(path);
+    if (path !== '/api/contributions' && path !== privateCreatePath && !match) return response({ error: 'Not found.' }, 404);
+    const id = path === privateCreatePath ? undefined : match?.[1];
     if (id && !contributionId.test(id)) return response({ error: 'Not found.' }, 404);
-    if (match && !match[2] && request.method === 'GET') {
-        const { results } = await db.prepare(`SELECT week, model, count FROM weekly_counts
-            WHERE contributor_id = ? ORDER BY week, model`).bind(id!).all<{ week: string; model: string; count: number }>();
-        const exists = await db.prepare('SELECT id FROM contributors WHERE id = ?').bind(id!).first<{ id: string }>();
-        return exists ? response({ id, counts: results }) : response({ error: 'Not found.' }, 404);
+    if (id && !match?.[2] && request.method === 'GET') {
+        const authorization = request.headers.get('Authorization');
+        const token = bearer(request);
+        if (authorization !== null && !token) return response({ error: 'Private token required.' }, 401);
+        const access = token ? 'c.token_hash = ?' : 'c.published = 1';
+        const { results } = await db.prepare(`SELECT w.week, w.model, w.count, c.published, c.report_revision
+            FROM contributors c JOIN weekly_counts w ON w.contributor_id = c.id
+            WHERE c.id = ? AND ${access} ORDER BY w.week, w.model LIMIT ?`)
+            .bind(id!, ...(token ? [await tokenHash(token)] : []), MAX_REVIEW_CELLS + 1).all<{
+                week: string; model: string; count: number; published: number; report_revision: number;
+            }>();
+        if (!results.length) return response({ error: 'Not found.' }, 404);
+        if (results.length > MAX_REVIEW_CELLS) return token
+            ? response({ id, published: results[0].published === 1, revision: results[0].report_revision, tooLarge: true })
+            : response({ error: 'Report exceeds the display limit.' }, 413);
+        return response({ id, counts: results.map(({ week, model, count }) => ({ week, model, count })),
+            published: results[0].published === 1, ...(token ? { revision: results[0].report_revision } : {}) });
     }
 
-    const isCreate = path === '/api/contributions' && request.method === 'POST';
+    const isCreate = path === privateCreatePath && request.method === 'POST';
+    const isLegacyCreate = path === '/api/contributions' && request.method === 'POST';
     const isReplace = !!id && !match?.[2] && request.method === 'PUT';
     const isDelete = !!id && !match?.[2] && request.method === 'DELETE';
-    const isRotate = !!id && !!match?.[2] && request.method === 'POST';
-    if (!isCreate && !isReplace && !isDelete && !isRotate) return response({ error: 'Method not allowed.' }, 405);
+    const isRotate = !!id && match?.[2] === '/rotate' && request.method === 'POST';
+    const isShare = !!id && match?.[2] === '/share' && request.method === 'POST';
+    const isUnshare = !!id && match?.[2] === '/unshare' && request.method === 'POST';
+    if (!isCreate && !isLegacyCreate && !isReplace && !isDelete && !isRotate && !isShare && !isUnshare) {
+        return response({ error: 'Method not allowed.' }, 405);
+    }
 
-    const token = isCreate ? null : bearer(request);
-    if (!isCreate && !token) return response({ error: 'Private token required.' }, 401);
-    if (isCreate || isReplace) {
+    const token = isCreate || isLegacyCreate ? null : bearer(request);
+    if (!isCreate && !isLegacyCreate && !token) return response({ error: 'Private token required.' }, 401);
+    if (isCreate || isLegacyCreate || isReplace) {
         const invalidHeaders = uploadHeaders(request);
         if (invalidHeaders) return invalidHeaders;
+    }
+    if (isLegacyCreate || (isCreate && request.headers.get('X-Model-Tides-Report') !== 'private-v1')) {
+        return response({ error: 'Update Model Tides before uploading a private contribution.' }, 426);
+    }
+    const expectedVisibility = isReplace ? request.headers.get('X-Model-Tides-Expected-Visibility') : null;
+    if (isReplace && expectedVisibility !== 'private' && expectedVisibility !== 'public') {
+        return response({ error: 'Update Model Tides before replacing a contribution.' }, 426);
+    }
+    const expectedPublished = expectedVisibility === 'public' ? 1 : 0;
+    const reviewed = isShare ? request.headers.get('X-Model-Tides-Reviewed-Revision') : null;
+    if (isShare && (reviewed === null || !/^(0|[1-9]\d*)$/.test(reviewed) ||
+        !Number.isSafeInteger(Number(reviewed)))) {
+        return response({ error: 'Update Model Tides and review every weekly count before sharing.' }, 426);
     }
     const rate = await limit.limit({ key: `write:${request.headers.get('CF-Connecting-IP') ?? 'unattributed'}` });
     if (!rate.success) return response({ error: 'Too many uploads. Try again later.' }, 429);
@@ -219,6 +215,18 @@ export async function handleContributions(
             .bind(await tokenHash(replacement), now, id!, hash!).run();
         return result.meta.changes === 1 ? response({ id, token: replacement }) : response({ error: 'Invalid contribution or token.' }, 401);
     }
+    if (isShare || isUnshare) {
+        const published = isShare ? 1 : 0;
+        const sql = isShare
+            ? `UPDATE contributors SET published = ?, updated_at = ?, report_revision = report_revision + 1
+                WHERE id = ? AND token_hash = ? AND report_revision = ?
+                AND (SELECT COUNT(*) FROM (SELECT 1 FROM weekly_counts WHERE contributor_id = ? LIMIT ?)) BETWEEN 1 AND ?`
+            : 'UPDATE contributors SET published = ?, updated_at = ?, report_revision = report_revision + 1 WHERE id = ? AND token_hash = ?';
+        const result = await db.prepare(sql).bind(published, now, id!, hash!, ...(isShare
+            ? [Number(reviewed), id!, MAX_REVIEW_CELLS + 1, MAX_REVIEW_CELLS] : [])).run();
+        if (result.meta.changes !== 1) return response({ error: 'Report changed. Review all counts before sharing.' }, 409);
+        return response({ id, published: isShare, ...(isShare ? { url: `${new URL(request.url).origin}/u/${id}` } : {}) });
+    }
     const snapshot = await readSnapshot(request);
     if (snapshot instanceof Response) return snapshot;
     const entries = rows(snapshot);
@@ -226,19 +234,39 @@ export async function handleContributions(
         const createdId = uuidv7();
         const secret = newToken();
         await db.batch([
-            db.prepare('INSERT INTO contributors (id, token_hash, created_at, updated_at) VALUES (?, ?, ?, ?)')
+            db.prepare('INSERT INTO contributors (id, token_hash, created_at, updated_at, published) VALUES (?, ?, ?, ?, 0)')
                 .bind(createdId, await tokenHash(secret), now, now),
             ...insertRows(db, createdId, entries),
         ]);
-        return response({ id: createdId, url: `${new URL(request.url).origin}/u/${createdId}`, token: secret }, 201);
+        return response({ id: createdId, published: false, token: secret }, 201);
     }
     const weeks = snapshot.weeks.map(({ week }) => week);
-    const result = await db.batch([
-        db.prepare('UPDATE contributors SET updated_at = ? WHERE id = ? AND token_hash = ?').bind(now, id!, hash!),
+    const exceedsStoredLimit = async (): Promise<boolean> => {
+        const retained = await db.prepare(`SELECT COUNT(*) AS cells, COUNT(DISTINCT week) AS weeks FROM weekly_counts
+            WHERE contributor_id = ? AND week NOT IN (${weeks.map(() => '?').join(', ')})`)
+            .bind(id!, ...weeks).first<{ cells: number; weeks: number }>();
+        if (!retained) throw new Error('Could not check stored report size.');
+        return retained.cells + entries.length > MAX_CELLS || retained.weeks + weeks.length > MAX_WEEKS;
+    };
+    if (await exceedsStoredLimit()) {
+        return response({ error: 'Stored report exceeds the weekly count limit.' }, 413);
+    }
+    const statements = [
+        db.prepare('UPDATE contributors SET updated_at = ?, report_revision = report_revision + 1 WHERE id = ? AND token_hash = ? AND published = ?')
+            .bind(now, id!, hash!, expectedPublished),
         db.prepare(`DELETE FROM weekly_counts WHERE contributor_id = ? AND week IN (${weeks.map(() => '?').join(', ')})
-            AND EXISTS (SELECT 1 FROM contributors WHERE id = ? AND token_hash = ?)`)
-            .bind(id!, ...weeks, id!, hash!),
-        ...insertRows(db, id!, entries, hash!),
-    ]);
-    return result[0].meta.changes === 1 ? response({ id, replacedWeeks: weeks.length }) : response({ error: 'Invalid contribution or token.' }, 401);
+            AND EXISTS (SELECT 1 FROM contributors WHERE id = ? AND token_hash = ? AND published = ?)`)
+            .bind(id!, ...weeks, id!, hash!, expectedPublished),
+        ...insertRows(db, id!, entries, hash!, expectedPublished),
+    ];
+    const result = await db.batch(statements).catch(async (error: unknown) => {
+        if (error instanceof Error && error.message.includes(storedLimitTrigger) && await exceedsStoredLimit()) return null;
+        throw error;
+    });
+    if (!result) return response({ error: 'Stored report exceeds the weekly count limit.' }, 413);
+    if (result[0].meta.changes !== 1) return response({ error: 'Report visibility changed. Review before replacing.' }, 409);
+    const current = await db.prepare('SELECT published FROM contributors WHERE id = ? AND token_hash = ?')
+        .bind(id!, hash!).first<{ published: number }>();
+    return current ? response({ id, replacedWeeks: weeks.length, published: current.published === 1 }) :
+        response({ error: 'Invalid contribution or token.' }, 401);
 }

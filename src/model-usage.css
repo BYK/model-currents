@@ -299,6 +299,8 @@ h2 { margin-bottom: 0; font-family: Georgia, 'Times New Roman', serif; font-size
 .home-cta { max-width: 840px; margin: 0 auto 54px; }
 .home-cta h2 { margin: 0 0 18px; font-family: 'Instrument Sans', 'Helvetica Neue', Arial, sans-serif; font-size: clamp(18px, 2.2vw, 24px); font-weight: 550; letter-spacing: -0.025em; }
 .command-strip { min-height: 72px; display: grid; grid-template-columns: 112px minmax(0, 1fr) 70px; overflow: hidden; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); box-shadow: 0 14px 32px light-dark(#8fb9b329, #04151c42); }
+.command-strip[href] { grid-template-columns: 1fr; place-items: center; padding: 0 20px; color: var(--text); font-size: clamp(16px, 2vw, 20px); font-weight: 600; text-align: center; text-decoration: none; }
+.command-strip[href]:hover { color: var(--accent); }
 .command-kind { display: grid; place-items: center; border-right: 1px solid var(--line); background: var(--panel-raised); color: var(--muted); font-size: 20px; font-weight: 700; }
 .command-strip code { align-self: center; padding: 0 28px; overflow-x: auto; color: var(--text); font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; font-size: clamp(12px, 1.55vw, 20px); white-space: nowrap; scrollbar-width: thin; user-select: all; }
 .command-prompt { color: var(--accent); }

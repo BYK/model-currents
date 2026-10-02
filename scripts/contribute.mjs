@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { brotliCompressSync } from 'node:zlib';
 import { parseUsageDocument, MAX_EVENTS, MAX_JSON_BYTES } from '../src/usage-data.ts';
-import { buildWeeklySnapshot } from '../src/weekly-snapshot.ts';
+import { buildWeeklySnapshot, parseOwnedReport } from '../src/weekly-snapshot.ts';
 
 const scripts = new URL('.', import.meta.url);
 const api = 'https://modeltides.dev/api/contributions';
@@ -126,20 +126,72 @@ export function exportLocalMetadata(sources, onProgress) {
     return document;
 }
 
-export async function publishSnapshot(snapshot, owner = null, fetchImpl = fetch, endpoint = api) {
+export async function publishSnapshot(snapshot, owner = null, fetchImpl = fetch, endpoint = api, published = null) {
+    if (owner && typeof published !== 'boolean') throw new TypeError('Expected report visibility.');
     const body = brotliCompressSync(Buffer.from(JSON.stringify(snapshot)));
-    const response = await fetchImpl(owner ? `${endpoint}/${owner.id}` : endpoint, {
+    const response = await fetchImpl(owner ? `${endpoint}/${owner.id}` : `${endpoint}/private`, {
         method: owner ? 'PUT' : 'POST',
         headers: {
             'Content-Type': 'application/vnd.model-tides.weekly+json',
             'Content-Encoding': 'br',
             'X-Model-Tides-Schema': 'weekly-v1',
-            ...(owner ? { Authorization: `Bearer ${owner.token}` } : {}),
+            ...(!owner ? { 'X-Model-Tides-Report': 'private-v1' } : {}),
+            ...(owner ? { Authorization: `Bearer ${owner.token}`,
+                'X-Model-Tides-Expected-Visibility': published ? 'public' : 'private' } : {}),
         },
         body,
     });
     if (!response.ok) throw new Error(`Upload failed (HTTP ${response.status}). No successful upload was confirmed; your local history is unchanged.`);
     return response.json();
+}
+
+export async function getOwnedReport(owner, fetchImpl = fetch, endpoint = api) {
+    try {
+        const response = await fetchImpl(`${endpoint}/${owner.id}`, {
+            headers: { Authorization: `Bearer ${owner.token}` }, cache: 'no-store',
+        });
+        if (!response.ok) throw new TypeError('Unavailable report.');
+        return parseOwnedReport(await response.json(), owner.id);
+    } catch {
+        throw new Error('Could not confirm personal report visibility and counts. No sharing change was started.');
+    }
+}
+
+export async function setSharing(owner, published, fetchImpl = fetch, endpoint = api, reviewed = null) {
+    if (published && (!reviewed || !reviewed.snapshot || !Number.isSafeInteger(reviewed.revision) || reviewed.revision < 0)) {
+        throw new Error('Review every stored weekly count before sharing.');
+    }
+    const revision = reviewed?.revision;
+    const response = await fetchImpl(`${endpoint}/${owner.id}/${published ? 'share' : 'unshare'}`, {
+        method: 'POST', headers: { Authorization: `Bearer ${owner.token}`,
+            ...(published ? { 'X-Model-Tides-Reviewed-Revision': String(revision) } : {}) },
+    }).catch(() => null);
+    if (response && !response.ok) throw new Error('Sharing was rejected. Review the current report before retrying.');
+    try {
+        if (!response) throw new TypeError('Sharing response unavailable.');
+        const result = await response.json();
+        if (result.id !== owner.id || result.published !== published ||
+            (published && result.url !== `${new URL(endpoint).origin}/u/${owner.id}`)) {
+            throw new TypeError('Invalid sharing response.');
+        }
+        return result;
+    } catch {
+        const current = await getOwnedReport(owner, fetchImpl, endpoint).catch(() => null);
+        if (!current) throw new Error('Could not confirm personal report visibility. The change may have happened; check before retrying.');
+        if (current.published !== published || (published &&
+            (current.revision !== revision + 1 || JSON.stringify(current.snapshot) !== JSON.stringify(reviewed.snapshot)))) {
+            throw new Error(`The personal report is ${current.published ? 'public' : 'hidden'}. The sharing change was not confirmed; review again before retrying.`);
+        }
+        return { id: owner.id, published, ...(published ? { url: `${new URL(endpoint).origin}/u/${owner.id}` } : {}) };
+    }
+}
+
+export async function reportVisibility(owner, fetchImpl = fetch, endpoint = api) {
+    try {
+        return (await getOwnedReport(owner, fetchImpl, endpoint)).published;
+    } catch {
+        throw new Error('Could not confirm personal report visibility. No upload was started.');
+    }
 }
 
 function loadCredential() {
@@ -174,6 +226,14 @@ async function confirm(question) {
     finally { prompt.close(); }
 }
 
+function preview(snapshot) {
+    if (snapshot.weeks.length === 0) throw new Error('No model observations found.');
+    for (const { week, models } of snapshot.weeks) {
+        console.log(`Week of ${week}`);
+        for (const [model, count] of Object.entries(models)) console.log(`  ${model}: ${count}`);
+    }
+}
+
 async function main() {
     const args = process.argv.slice(2);
     if (args[0] === 'export') {
@@ -190,11 +250,66 @@ async function main() {
         console.log(`Saved ${document.events.length} model events to ${output}. Open it at https://modeltides.dev/local/. This file contains exact event timestamps; keep it private.`);
         return;
     }
+    if (args[0] === 'gist') {
+        if (args.length !== 1 && (args.length !== 3 || args[1] !== '--input' || !args[2])) {
+            throw new Error('Usage: model-tides gist [--input metadata.json]');
+        }
+        const input = args[2];
+        if (input && !regular(input)) throw new Error('Input must be a regular metadata JSON file.');
+        const sources = input ? [] : collectSources();
+        if (!input && !sources.length) throw new Error('No supported harness history was found. Use --input for an existing metadata JSON.');
+        const snapshot = input ? snapshotFromDocuments([readMetadata(readFileSync(input))]) : exportLocal(sources, console.log);
+        console.log('The following weekly counts would go into an unlisted GitHub gist:');
+        preview(snapshot);
+        console.log('Anyone with the gist URL can read these counts. GitHub stores the gist and its revisions. No exact event times, source paths, prompts, replies, or session IDs are included.');
+        if (!await confirm('Create this unlisted gist of weekly counts?')) return;
+        const created = spawnSync('gh', ['gist', 'create', '--filename', 'model-tides-weekly.json', '-'], {
+            input: JSON.stringify(snapshot) + '\n', encoding: 'utf8', timeout: 30_000, maxBuffer: 1024,
+        });
+        if (created.error?.code === 'ENOENT') throw new Error('GitHub CLI (gh) is required to create a gist.');
+        if (created.error || created.status !== 0) throw new Error('Could not create the unlisted gist. Check that gh is authenticated with gist access.');
+        const url = created.stdout.trim();
+        const match = /^https:\/\/gist\.github\.com\/(?:(\w[\w-]{0,38})\/)?([a-f0-9]{32})$/.exec(url);
+        if (!match) {
+            throw new Error('GitHub CLI returned an invalid gist URL.');
+        }
+        console.log(`Unlisted gist: ${url}`);
+        const identity = match[1] ? null : spawnSync('gh', ['api', 'user', '--jq', '.login'], {
+            encoding: 'utf8', timeout: 10_000, maxBuffer: 256,
+        });
+        const owner = match[1] ?? (identity?.status === 0 ? identity.stdout.trim() : '');
+        if (/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(owner)) {
+            console.log(`View in browser: https://modeltides.dev/gist#${owner}/${match[2]}`);
+        } else {
+            console.log('The gist was created. Its Model Tides viewer link could not be determined; open the gist URL above.');
+        }
+        return;
+    }
     if (args[0] === 'link') {
         if (args.length !== 1) throw new Error('Usage: model-tides link');
         const owner = loadCredential();
         if (!owner) throw new Error('No private key file exists for this contribution.');
         console.log(`Public link: https://modeltides.dev/u/${owner.id}`);
+        console.log('This link works only while your personal report is shared. Run model-tides share to publish it.');
+        return;
+    }
+    if (args[0] === 'share' || args[0] === 'unshare') {
+        if (args.length !== 1) throw new Error('Usage: model-tides share | unshare');
+        const owner = loadCredential();
+        if (!owner) throw new Error('No private key file exists for this contribution. Upload weekly counts first.');
+        const published = args[0] === 'share';
+        const report = published ? await getOwnedReport(owner) : null;
+        if (report) {
+            if (!report.snapshot) throw new Error('The stored report is too large to review. You can still hide or delete it.');
+            console.log('Review every stored count below. Sharing publishes all of these weeks, including earlier uploads:');
+            preview(report.snapshot);
+        }
+        if (!await confirm(published
+            ? 'Publish all of these personal weekly counts at a public link?'
+            : 'Hide your personal report? Your counts will still contribute to the aggregate.')) return;
+        await setSharing(owner, published, fetch, api, report);
+        console.log(published ? `Public link: https://modeltides.dev/u/${owner.id}` :
+            'Your personal report is hidden. Your weekly counts still contribute to the aggregate.');
         return;
     }
     if (args[0] === 'upload') args.shift();
@@ -231,15 +346,24 @@ async function main() {
     const snapshot = option === '--input'
         ? snapshotFromDocuments([readMetadata(readFileSync(sources[0].path))])
         : exportLocal(sources, console.log);
-    if (snapshot.weeks.length === 0) throw new Error('No model observations found.');
-    console.log(`Checked ${sources.map(({ name }) => name).join(', ')}. The following weekly counts would be shared:`);
-    for (const { week, models } of snapshot.weeks) {
-        console.log(`Week of ${week}`);
-        for (const [model, count] of Object.entries(models)) console.log(`  ${model}: ${count}`);
-    }
+    console.log(`Checked ${sources.map(({ name }) => name).join(', ')}. The following weekly counts would be uploaded:`);
+    preview(snapshot);
     console.log('Only the displayed weeks, model names, and counts are uploaded. No prompts, replies, paths, exact times, or session IDs.');
-    if (!await confirm(owner ? 'Replace these weeks in your existing shared link?' : 'Create a public contribution and save its private key locally?')) return;
-    const result = await publishSnapshot(snapshot, owner);
+    const published = owner ? await reportVisibility(owner) : false;
+    if (owner) {
+        console.log(published
+            ? 'Your personal report is already public. These reviewed counts will be public immediately after replacement.'
+            : 'Your personal report is private. Replacing these weeks keeps it private.');
+    } else {
+        console.log('Your new personal report stays private until you choose to share it.');
+    }
+    if (!await confirm(owner ? 'Replace these weeks in your existing contribution?' : 'Upload to the aggregate and save a private key locally?')) return;
+    const result = await publishSnapshot(snapshot, owner, fetch, api, published);
+    if (!result || !/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(result.id) ||
+        result.id !== (owner?.id ?? result.id) || typeof result.published !== 'boolean' ||
+        (!owner && (typeof result.token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(result.token)))) {
+        throw new Error('Invalid upload response.');
+    }
     if (!owner) {
         try { saveNewCredential({ id: result.id, token: result.token }); }
         catch {
@@ -248,7 +372,8 @@ async function main() {
                 'Could not save your private key or remove the new contribution.');
         }
     }
-    console.log(`Public link: https://modeltides.dev/u/${owner?.id ?? result.id}`);
+    console.log(result.published ? `Public link: https://modeltides.dev/u/${result.id}` :
+        'Weekly counts uploaded to the aggregate. Your personal report is private. Run model-tides share to publish it.');
     console.log('A separate private replacement key is stored in your local config directory. Never share it.');
 }
 
