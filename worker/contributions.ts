@@ -2,6 +2,8 @@ import { brotliDecompressSync } from 'node:zlib';
 import { MAX_CELLS, MAX_REVIEW_CELLS, MAX_WEEKS, parseSnapshot, type WeeklySnapshot } from '../src/weekly-snapshot.ts';
 export { parseSnapshot } from '../src/weekly-snapshot.ts';
 
+const storedLimitTrigger = 'MODEL_TIDES_STORED_REPORT_LIMIT';
+
 export interface Statement {
     bind(...values: (string | number)[]): Statement;
     first<T>(): Promise<T | null>;
@@ -258,7 +260,7 @@ export async function handleContributions(
         ...insertRows(db, id!, entries, hash!, expectedPublished),
     ];
     const result = await db.batch(statements).catch(async (error: unknown) => {
-        if (await exceedsStoredLimit()) return null;
+        if (error instanceof Error && error.message.includes(storedLimitTrigger) && await exceedsStoredLimit()) return null;
         throw error;
     });
     if (!result) return response({ error: 'Stored report exceeds the weekly count limit.' }, 413);

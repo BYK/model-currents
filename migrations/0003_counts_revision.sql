@@ -7,5 +7,5 @@ WHEN (SELECT COUNT(*) FROM weekly_counts WHERE contributor_id = NEW.contributor_
     OR (NOT EXISTS (SELECT 1 FROM weekly_counts WHERE contributor_id = NEW.contributor_id AND week = NEW.week)
         AND (SELECT COUNT(DISTINCT week) FROM weekly_counts WHERE contributor_id = NEW.contributor_id) >= 520)
 BEGIN
-    SELECT RAISE(ABORT, 'Stored weekly count limit exceeded');
+    SELECT RAISE(ABORT, 'MODEL_TIDES_STORED_REPORT_LIMIT');
 END;

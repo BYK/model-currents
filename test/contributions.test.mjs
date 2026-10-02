@@ -400,6 +400,8 @@ test('stored weeks cannot exceed 520 across valid uploads', async () => {
 });
 
 test('a concurrent replacement that fills the last stored cell rejects the other upload without a service error', async () => {
+    assert.match(readFileSync(new URL('../migrations/0003_counts_revision.sql', import.meta.url), 'utf8'),
+        /RAISE\(ABORT, 'MODEL_TIDES_STORED_REPORT_LIMIT'\)/);
     const db = database();
     try {
         const models = Object.fromEntries(Array.from({ length: 2047 }, (_, index) => [`model/${index}`, 1]));
@@ -426,6 +428,42 @@ test('a concurrent replacement that fills the last stored cell rejects the other
             .bind(id).first() }, { cells: 2048 });
         assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM weekly_counts WHERE contributor_id = ? AND model = ?')
             .bind(id, 'model/rejected').first()).count, 0);
+        assert.equal((await db.prepare('SELECT report_revision FROM contributors WHERE id = ?').bind(id).first()).report_revision, 1);
+    } finally { db.close(); }
+});
+
+test('a concurrent limit does not disguise an unrelated batch failure', async () => {
+    const db = database();
+    try {
+        const models = Object.fromEntries(Array.from({ length: 2047 }, (_, index) => [`model/${index}`, 1]));
+        const initial = { ...snapshot(), weeks: [{ week: '2026-09-28', models }] };
+        const { id, token } = await (await handleContributions(upload(initial), db, limit,
+            '/api/contributions/private')).json();
+        const path = `/api/contributions/${id}`;
+        const waiting = Promise.withResolvers();
+        const resume = Promise.withResolvers();
+        const failingDb = {
+            prepare: (sql) => db.prepare(sql),
+            async batch() {
+                waiting.resolve();
+                await resume.promise;
+                throw new Error('synthetic database failure');
+            },
+        };
+        const next = (week, model) => ({ ...snapshot(), weeks: [{ week, models: { [model]: 1 } }] });
+        const pending = worker.fetch(upload(next('2026-09-14', 'model/rejected'), path, 'PUT', token), {
+            DB: failingDb, UPLOAD_LIMIT: limit, ASSETS: { async fetch() { return new Response('asset'); } },
+        });
+        try {
+            await waiting.promise;
+            assert.equal((await handleContributions(upload(next('2026-09-21', 'model/accepted'), path, 'PUT', token),
+                db, limit, path)).status, 200);
+        } finally { resume.resolve(); }
+        const result = await pending;
+        assert.equal(result.status, 503);
+        assert.equal((await result.text()).includes('synthetic database failure'), false);
+        assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM weekly_counts WHERE contributor_id = ?')
+            .bind(id).first()).count, 2048);
         assert.equal((await db.prepare('SELECT report_revision FROM contributors WHERE id = ?').bind(id).first()).report_revision, 1);
     } finally { db.close(); }
 });
