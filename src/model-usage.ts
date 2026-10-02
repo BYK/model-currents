@@ -147,7 +147,7 @@ root.innerHTML = `
 
         <dialog id="contribution-dialog" class="contribution-dialog" aria-labelledby="contribution-heading">
             <h2 id="contribution-heading">Share weekly counts</h2>
-            <p>Review every week, model name, and count below. Only models listed on models.dev can be shared. Unlisted names stay local. Your original history, exact event times, prompts, replies, and session IDs stay here.</p>
+            <p>Review every week, model name, and count below before sharing. Your original history, exact event times, prompts, replies, and session IDs stay here.</p>
             <pre id="contribution-preview" class="contribution-preview"></pre>
             <p id="contribution-status" role="status" aria-live="polite"></p>
             <label class="key-import">Already have a shared link? Load your private key to replace matching weeks <input id="owner-key-file" type="file" accept=".json,application/json" /></label>

@@ -16,7 +16,7 @@ test('the Worker serves app assets and keeps future dynamic routes out of static
     const privateView = await worker.fetch(new Request('https://modeltides.dev/local/'), env);
     assert.equal(await privateView.text(), 'asset');
 
-    for (const path of ['/api/future', '/u/public-id', '/og/public-id.png']) {
+    for (const path of ['/api/future', '/api/models', '/u/public-id', '/og/public-id.png']) {
         const response = await worker.fetch(new Request(`https://modeltides.dev${path}`), env);
         assert.equal(response.status, 404);
         assert.equal(response.headers.get('Cache-Control'), 'no-store');
@@ -24,7 +24,6 @@ test('the Worker serves app assets and keeps future dynamic routes out of static
     assert.deepEqual(requests, ['https://modeltides.dev/', 'https://modeltides.dev/assets/image.svg', 'https://modeltides.dev/']);
     const missingBinding = await worker.fetch(new Request('https://modeltides.dev/api/aggregate'), env);
     assert.equal(missingBinding.status, 503);
-    assert.equal((await worker.fetch(new Request('https://modeltides.dev/api/models'), env)).status, 503);
 });
 
 test('the Worker redirects www and refuses writes to static paths', async () => {

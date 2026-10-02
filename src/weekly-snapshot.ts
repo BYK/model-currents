@@ -48,37 +48,3 @@ export function buildWeeklySnapshot(events: Iterable<Pick<UsageEvent, 'time' | '
     }
     return { format: WEEKLY_FORMAT, version: WEEKLY_VERSION, weeks: result };
 }
-
-export function filterWeeklySnapshot(snapshot: WeeklySnapshot, known: ReadonlySet<string>): {
-    snapshot: WeeklySnapshot;
-    excluded: string[];
-} {
-    const excluded = new Set<string>();
-    const weeks = snapshot.weeks.flatMap(({ week, models }) => {
-        const listed = Object.entries(models).filter(([model]) => {
-            if (known.has(model)) return true;
-            excluded.add(model);
-            return false;
-        });
-        return listed.length ? [{ week, models: Object.fromEntries(listed) }] : [];
-    });
-    return {
-        snapshot: { format: WEEKLY_FORMAT, version: WEEKLY_VERSION, weeks },
-        excluded: [...excluded].sort((a, b) => a.localeCompare(b)),
-    };
-}
-
-export async function fetchKnownModels(url: string, fetcher: typeof fetch = fetch): Promise<ReadonlySet<string>> {
-    const response = await fetcher(url, { cache: 'no-store' });
-    if (!response.ok) throw new Error('Model verification unavailable.');
-    const document: unknown = await response.json();
-    if (document === null || typeof document !== 'object' || Array.isArray(document) ||
-        Object.keys(document).length !== 1 || !('models' in document) || !Array.isArray(document.models) ||
-        document.models.length < 1 || document.models.length > 20_000 ||
-        document.models.some((model: unknown) => !validWeeklyModel(model))) {
-        throw new Error('Invalid model registry response.');
-    }
-    const result = new Set<string>(document.models);
-    if (result.size !== document.models.length) throw new Error('Invalid model registry response.');
-    return result;
-}

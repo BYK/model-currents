@@ -1,6 +1,6 @@
 import { downloadBlob } from './share-image';
 import type { UsageEvent } from './usage-data';
-import { buildWeeklySnapshot, fetchKnownModels, filterWeeklySnapshot, type WeeklySnapshot } from './weekly-snapshot';
+import { buildWeeklySnapshot, type WeeklySnapshot } from './weekly-snapshot';
 
 interface ContributionState {
     snapshot: WeeklySnapshot | null;
@@ -24,7 +24,6 @@ export function setupContributions(
     const remove = dialog.querySelector<HTMLButtonElement>('#delete-contribution')!;
     const keyFile = dialog.querySelector<HTMLInputElement>('#owner-key-file')!;
     const state: ContributionState = { snapshot: null, key: null };
-    const pendingPreview = { generation: 0 };
     const setBusy = (busy: boolean): void => {
         confirm.disabled = busy;
         close.disabled = busy;
@@ -36,8 +35,7 @@ export function setupContributions(
         if (close.disabled) event.preventDefault();
     });
 
-    button.addEventListener('click', async () => {
-        const generation = ++pendingPreview.generation;
+    button.addEventListener('click', () => {
         state.snapshot = null;
         preview.textContent = '';
         confirm.hidden = true;
@@ -56,28 +54,14 @@ export function setupContributions(
             status.textContent = 'No model observations to share.';
             return;
         }
-        status.textContent = 'Checking model names against models.dev…';
-        try {
-            const known = await fetchKnownModels('/api/models');
-            if (!dialog.open || generation !== pendingPreview.generation) return;
-            const reviewed = filterWeeklySnapshot(snapshot, known);
-            state.snapshot = reviewed.snapshot;
-            preview.textContent = reviewed.snapshot.weeks.map(({ week, models }) =>
-                `Week of ${week}\n${Object.entries(models).map(([model, count]) => `  ${model}: ${count}`).join('\n')}`).join('\n\n') +
-                (reviewed.excluded.length ? `\n\nNot shared (not listed on models.dev):\n${reviewed.excluded.join('\n')}` : '');
-            if (reviewed.snapshot.weeks.length === 0) {
-                status.textContent = 'No models in this history are listed on models.dev. Nothing can be shared; your history stays local.';
-                return;
-            }
-            status.textContent = state.key
-                ? 'These exact counts will replace the matching weeks at your existing public link.'
-                : 'These exact counts will be public. Your original history stays in this tab.';
-            confirm.hidden = false;
-            confirm.textContent = state.key ? 'Replace these weeks' : 'Upload these weekly counts';
-        } catch {
-            if (!dialog.open || generation !== pendingPreview.generation) return;
-            status.textContent = 'Could not verify these model names against models.dev. Your history remains local.';
-        }
+        state.snapshot = snapshot;
+        preview.textContent = snapshot.weeks.map(({ week, models }) =>
+            `Week of ${week}\n${Object.entries(models).map(([model, count]) => `  ${model}: ${count}`).join('\n')}`).join('\n\n');
+        status.textContent = state.key
+            ? 'These exact counts will replace the matching weeks at your existing public link.'
+            : 'These exact counts will be public. Your original history stays in this tab.';
+        confirm.hidden = false;
+        confirm.textContent = state.key ? 'Replace these weeks' : 'Upload these weekly counts';
     });
 
     keyFile.addEventListener('change', async () => {
@@ -118,7 +102,7 @@ export function setupContributions(
                 body: new Blob([Uint8Array.from(compressed)]),
                 cache: 'no-store',
             });
-            if (!response.ok) throw new Error('Upload failed. Nothing was shared.');
+            if (!response.ok) throw new Error('Upload failed.');
             const saved: { id: string; token?: string } = await response.json();
             if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(saved.id) ||
                 (state.key && saved.id !== state.key.id) ||
@@ -173,5 +157,5 @@ export function setupContributions(
         } catch { status.textContent = 'Could not delete the contribution. Try again.'; }
         finally { setBusy(false); }
     });
-    return { clearSnapshot() { pendingPreview.generation++; state.snapshot = null; dialog.close(); } };
+    return { clearSnapshot() { state.snapshot = null; dialog.close(); } };
 }

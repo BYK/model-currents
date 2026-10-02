@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { brotliCompressSync } from 'node:zlib';
 import { parseUsageDocument, MAX_EVENTS, MAX_JSON_BYTES } from '../src/usage-data.ts';
-import { buildWeeklySnapshot, fetchKnownModels, filterWeeklySnapshot } from '../src/weekly-snapshot.ts';
+import { buildWeeklySnapshot } from '../src/weekly-snapshot.ts';
 
 const scripts = new URL('.', import.meta.url);
 const api = 'https://modeltides.dev/api/contributions';
@@ -138,7 +138,7 @@ export async function publishSnapshot(snapshot, owner = null, fetchImpl = fetch,
         },
         body,
     });
-    if (!response.ok) throw new Error(`Upload failed (HTTP ${response.status}). Your local history was not saved to this site.`);
+    if (!response.ok) throw new Error(`Upload failed (HTTP ${response.status}). No successful upload was confirmed; your local history is unchanged.`);
     return response.json();
 }
 
@@ -190,6 +190,13 @@ async function main() {
         console.log(`Saved ${document.events.length} model events to ${output}. Open it at https://modeltides.dev/local/. This file contains exact event timestamps; keep it private.`);
         return;
     }
+    if (args[0] === 'link') {
+        if (args.length !== 1) throw new Error('Usage: model-tides link');
+        const owner = loadCredential();
+        if (!owner) throw new Error('No private key file exists for this contribution.');
+        console.log(`Public link: https://modeltides.dev/u/${owner.id}`);
+        return;
+    }
     if (args[0] === 'upload') args.shift();
     const option = args[0];
     if (args.length > 2 || (option && !['--input', '--delete', '--rotate'].includes(option)) ||
@@ -221,19 +228,15 @@ async function main() {
     const sources = option === '--input' ? [{ name: 'metadata file', path: args[1] }] : collectSources();
     if (!sources.length) throw new Error('No supported harness history was found. Use --input for an existing metadata JSON.');
     if (option === '--input' && !regular(sources[0].path)) throw new Error('Input must be a regular metadata JSON file.');
-    const localSnapshot = option === '--input'
+    const snapshot = option === '--input'
         ? snapshotFromDocuments([readMetadata(readFileSync(sources[0].path))])
         : exportLocal(sources, console.log);
-    if (localSnapshot.weeks.length === 0) throw new Error('No model observations found.');
-    console.log('Checking model names against models.dev…');
-    const { snapshot, excluded } = filterWeeklySnapshot(localSnapshot, await fetchKnownModels('https://modeltides.dev/api/models'));
+    if (snapshot.weeks.length === 0) throw new Error('No model observations found.');
     console.log(`Checked ${sources.map(({ name }) => name).join(', ')}. The following weekly counts would be shared:`);
     for (const { week, models } of snapshot.weeks) {
         console.log(`Week of ${week}`);
         for (const [model, count] of Object.entries(models)) console.log(`  ${model}: ${count}`);
     }
-    if (excluded.length) console.log(`Not shared (not listed on models.dev): ${excluded.join(', ')}`);
-    if (snapshot.weeks.length === 0) throw new Error('No models listed on models.dev were found in this history. Nothing was shared.');
     console.log('Only the displayed weeks, model names, and counts are uploaded. No prompts, replies, paths, exact times, or session IDs.');
     if (!await confirm(owner ? 'Replace these weeks in your existing shared link?' : 'Create a public contribution and save its private key locally?')) return;
     const result = await publishSnapshot(snapshot, owner);
