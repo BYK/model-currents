@@ -21,7 +21,11 @@ function database(migrated = true) {
     const prepare = (sql) => {
         const statement = {
             values: [],
-            bind(...values) { this.values = values; return this; },
+            bind(...values) {
+                if (values.length > 100) throw new RangeError('D1 allows at most 100 bound parameters per query.');
+                this.values = values;
+                return this;
+            },
             first() { return Promise.resolve(sqlite.prepare(sql).get(...this.values) ?? null); },
             all() { return Promise.resolve({ results: sqlite.prepare(sql).all(...this.values) }); },
             run() {
@@ -106,6 +110,28 @@ test('new private creation uses a path the old Worker cannot treat as a public c
         const oldPath = await worker.fetch(upload(snapshot(), '/api/contributions'), env);
         assert.equal(oldPath.status, 426, 'old clients must not create contributions at the unversioned path');
         assert.equal((await db.prepare('SELECT count(*) AS count FROM contributors').first()).count, 1);
+    } finally { db.close(); }
+});
+
+test('D1 accepts a 222-cell private upload and replacement without exceeding its parameter limit', async () => {
+    const db = database();
+    try {
+        const large = { format: 'model-tides-weekly', version: 1,
+            weeks: Array.from({ length: 38 }, (_, index) => ({
+                week: new Date(Date.UTC(2026, 0, 5 + index * 7)).toISOString().slice(0, 10),
+                models: Object.fromEntries(Array.from({ length: index < 32 ? 6 : 5 }, (_, model) =>
+                    [`synthetic/model-${model}`, 1])),
+            })) };
+        const created = await handleContributions(upload(large), db, limit, '/api/contributions/private');
+        assert.equal(created.status, 201);
+        const { id, token } = await created.json();
+        const path = `/api/contributions/${id}`;
+        assert.equal((await db.prepare('SELECT count(*) AS count FROM weekly_counts WHERE contributor_id = ?')
+            .bind(id).first()).count, 222);
+        const replaced = await handleContributions(upload(large, path, 'PUT', token), db, limit, path);
+        assert.equal(replaced.status, 200);
+        assert.equal((await db.prepare('SELECT count(*) AS count FROM weekly_counts WHERE contributor_id = ?')
+            .bind(id).first()).count, 222);
     } finally { db.close(); }
 });
 
