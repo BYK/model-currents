@@ -50,7 +50,7 @@ test('npm package includes the local converters, metadata validator, and command
         const id = '0199abcf-22aa-7333-8abc-0123456789ab';
         const token = 's'.repeat(43);
         writeFileSync(interceptor, `globalThis.fetch = async (url, options) => {
-            if (url !== 'https://modeltides.dev/api/contributions' || options?.method !== 'POST') {
+            if (url !== 'https://modeltides.dev/api/contributions/private' || options?.method !== 'POST') {
                 throw new Error('Unexpected network request: ' + String(url) + ' ' + String(options?.method));
             }
             return Response.json({ id: '${id}', token: '${token}', published: false }, { status: 201 });

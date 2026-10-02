@@ -148,7 +148,7 @@ root.innerHTML = `
 
         <dialog id="contribution-dialog" class="contribution-dialog" aria-labelledby="contribution-heading">
             <h2 id="contribution-heading">Upload weekly counts</h2>
-            <p>Review every week, model name, and count below before uploading. These counts contribute to the community aggregate; your personal report stays private until you choose to share it. Your original history, exact event times, prompts, replies, and session IDs stay here.</p>
+            <p>Review every week, model name, and count below before uploading. New personal reports start private. Replacing weeks in an already shared report makes the reviewed counts public immediately. Your original history, exact event times, prompts, replies, and session IDs stay here.</p>
             <pre id="contribution-preview" class="contribution-preview"></pre>
             <p id="contribution-status" role="status" aria-live="polite"></p>
             <label class="key-import">Already uploaded counts? Load your private key to manage or replace them <input id="owner-key-file" type="file" accept=".json,application/json" /></label>

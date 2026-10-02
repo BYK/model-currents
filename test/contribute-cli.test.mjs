@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { brotliDecompressSync } from 'node:zlib';
-import { collectSources, exportLocal, publishSnapshot, setSharing, snapshotFromDocuments } from '../scripts/contribute.mjs';
+import { collectSources, exportLocal, publishSnapshot, reportVisibility, setSharing, snapshotFromDocuments } from '../scripts/contribute.mjs';
 import { parseUsageDocument } from '../src/usage-data.ts';
 
 const doc = {
@@ -42,8 +42,9 @@ test('CLI sends only approved weekly model counts as Brotli, with private token 
         return new Response(JSON.stringify({ id: 'public-id', token: 'private-token' }), { status: 201 });
     };
     await publishSnapshot(snapshot, null, fakeFetch, 'https://example.test/api/contributions');
-    await publishSnapshot(snapshot, { id: 'public-id', token: 'private-token' }, fakeFetch, 'https://example.test/api/contributions');
-    assert.equal(calls[0].url, 'https://example.test/api/contributions');
+    await publishSnapshot(snapshot, { id: 'public-id', token: 'private-token' }, fakeFetch,
+        'https://example.test/api/contributions', false);
+    assert.equal(calls[0].url, 'https://example.test/api/contributions/private');
     assert.equal(calls[0].method, 'POST');
     assert.equal(calls[0].headers['Content-Encoding'], 'br');
     assert.equal(calls[0].headers['X-Model-Tides-Report'], 'private-v1');
@@ -51,6 +52,7 @@ test('CLI sends only approved weekly model counts as Brotli, with private token 
     assert.equal(calls[1].url, 'https://example.test/api/contributions/public-id');
     assert.equal(calls[1].method, 'PUT');
     assert.equal(calls[1].headers.Authorization, 'Bearer private-token');
+    assert.equal(calls[1].headers['X-Model-Tides-Expected-Visibility'], 'private');
     assert.equal(calls[1].headers['X-Model-Tides-Report'], undefined);
     assert.deepEqual(calls[0].body, { format: 'model-tides-weekly', version: 1, weeks: [{
         week: '2026-09-28', models: { 'anthropic/claude-sonnet': 1, 'openai/gpt-5': 1 },
@@ -58,6 +60,47 @@ test('CLI sends only approved weekly model counts as Brotli, with private token 
     for (const key of ['events', 'time', 'kind', 'fromModel', 'fromTime', 'source', 'sessionId']) {
         assert.equal(JSON.stringify(calls[0].body).includes(`"${key}"`), false);
     }
+});
+
+test('CLI warns before replacing weeks in an already public report', () => {
+    const home = mkdtempSync(join(tmpdir(), 'model-tides-public-replace-'));
+    try {
+        const id = '0199abcf-22aa-7333-8abc-0123456789ab';
+        mkdirSync(join(home, 'model-tides'));
+        writeFileSync(join(home, 'model-tides/contribution.json'), JSON.stringify({ id, token: 's'.repeat(43) }), { mode: 0o600 });
+        const input = join(home, 'metadata.json');
+        writeFileSync(input, JSON.stringify(doc));
+        const preload = join(home, 'public-report.mjs');
+        writeFileSync(preload, `globalThis.fetch = async (url, options) => {
+    if (url === 'https://modeltides.dev/api/contributions/${id}' && options?.method === undefined) {
+        return Response.json({ id: '${id}', published: true, counts: [] });
+    }
+    throw new Error('No upload was authorized.');
+};\n`);
+        const result = spawnSync(process.execPath, ['--experimental-strip-types', '--import', preload,
+            'scripts/contribute.mjs', 'upload', '--input', input], {
+            cwd: new URL('../', import.meta.url), encoding: 'utf8', input: 'NO\n', timeout: 10_000,
+            env: { ...process.env, HOME: home, XDG_CONFIG_HOME: home,
+                HTTPS_PROXY: 'http://127.0.0.1:1', HTTP_PROXY: 'http://127.0.0.1:1' },
+        });
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /already public.*reviewed counts.*public immediately/i);
+        assert.doesNotMatch(result.stdout, /personal report stays private until you share it/i);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('CLI refuses replacement if the report visibility cannot be verified', async () => {
+    const owner = { id: '0199abcf-22aa-7333-8abc-0123456789ab', token: 's'.repeat(43) };
+    const calls = [];
+    const fakeFetch = async (url, options) => {
+        calls.push({ url, options });
+        return Response.json({ id: owner.id, counts: [] }); // Old Worker responses omit visibility.
+    };
+    await assert.rejects(reportVisibility(owner, fakeFetch, 'https://example.test/api/contributions'),
+        /Could not confirm personal report visibility. No upload was started/);
+    assert.deepEqual(calls.map(({ url, options }) => ({ url, auth: options.headers.Authorization, method: options.method })), [
+        { url: `https://example.test/api/contributions/${owner.id}`, auth: `Bearer ${owner.token}`, method: undefined },
+    ]);
 });
 
 test('CLI rejects a metadata document carrying a private field before any upload', () => {
@@ -90,6 +133,10 @@ test('an unlisted gist contains reviewed weekly counts, never private event meta
         writeFileSync(input, JSON.stringify(doc));
         writeFileSync(join(home, 'gh'), `#!/usr/bin/env node
 import { readFileSync, writeFileSync } from 'node:fs';
+if (process.argv[2] === 'api' && process.argv[3] === 'user') {
+    process.stdout.write('BYK\\n');
+    process.exit(0);
+}
 writeFileSync(process.env.GIST_CAPTURE, JSON.stringify({ args: process.argv.slice(2), content: readFileSync(0, 'utf8') }));
 process.stdout.write('https://gist.github.com/0123456789abcdef0123456789abcdef\\n');
 `, { mode: 0o700 });
@@ -106,6 +153,7 @@ process.stdout.write('https://gist.github.com/0123456789abcdef0123456789abcdef\\
         const approved = run('YES');
         assert.equal(approved.status, 0, approved.stderr);
         assert.match(approved.stdout, /Unlisted gist: https:\/\/gist\.github\.com\//);
+        assert.match(approved.stdout, /View in browser: https:\/\/modeltides\.dev\/gist\/BYK\/0123456789abcdef0123456789abcdef/);
         const { args, content } = JSON.parse(readFileSync(capture, 'utf8'));
         assert.deepEqual(args, ['gist', 'create', '--filename', 'model-tides-weekly.json', '-']);
         assert.deepEqual(JSON.parse(content), snapshotFromDocuments([doc]));

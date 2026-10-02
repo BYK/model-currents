@@ -11,6 +11,7 @@ const reservedPaths = ['/api', '/u', '/og'];
 const idPattern = '[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const publicPath = new RegExp(`^/u/(${idPattern})$`);
 const imagePath = new RegExp(`^/og/(${idPattern})\\.png$`);
+const gistPath = /^\/gist\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\/[0-9a-f]{32}\/?$/;
 
 async function home(request: Request, env: Env): Promise<Response> {
     const asset = await env.ASSETS.fetch(request);
@@ -78,7 +79,7 @@ export default {
             return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
         }
 
-        if (url.pathname === '/local' || url.pathname === '/local/') {
+        if (url.pathname === '/local' || url.pathname === '/local/' || gistPath.test(url.pathname)) {
             return env.ASSETS.fetch(new Request(new URL('/', url), request));
         }
         return url.pathname === '/' && request.method === 'GET' ? home(request, env) : env.ASSETS.fetch(request);

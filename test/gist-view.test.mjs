@@ -1,0 +1,104 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { createServer } from 'vite';
+import { loadGistSnapshot, gistAddress } from '../src/gist-view.ts';
+
+const id = '1feed6ae2071f64565d1f1e092fdde32';
+const snapshot = { format: 'model-tides-weekly', version: 1, weeks: [
+    { week: '2026-09-28', models: { 'github-copilot/claude-opus-4.5': 2, 'openrouter/example:free': 1 } },
+] };
+const gist = (content = JSON.stringify(snapshot)) => ({
+    id, owner: { login: 'BYK' }, files: { 'model-tides-weekly.json': {
+        filename: 'model-tides-weekly.json', truncated: false, content,
+    } },
+});
+
+test('a gist URL loads weekly counts directly from GitHub, never through Model Tides', async () => {
+    const calls = [];
+    const result = await loadGistSnapshot('BYK', id, async (url, options) => {
+        calls.push({ url, options });
+        return Response.json(gist());
+    });
+    assert.deepEqual(result, snapshot);
+    assert.equal(gistAddress('BYK', id), `https://modeltides.dev/gist/BYK/${id}`);
+    assert.deepEqual(calls.map(({ url }) => url), [`https://api.github.com/gists/${id}`]);
+    assert.equal(calls[0].options.referrerPolicy, 'no-referrer');
+    assert.equal(calls[0].options.cache, 'no-store');
+});
+
+test('invalid paths, ownership, extra files, private fields, and large gists fail closed', async () => {
+    const called = [];
+    const fetchGist = (data) => async (url) => {
+        called.push(url);
+        return Response.json(data);
+    };
+    await assert.rejects(loadGistSnapshot('../BYK', id, fetchGist(gist())), /Invalid gist address/);
+    await assert.rejects(loadGistSnapshot('BYK', `${id}?private`, fetchGist(gist())), /Invalid gist address/);
+    assert.equal(called.length, 0);
+    for (const invalid of [
+        { ...gist(), owner: { login: 'different' } },
+        { ...gist(), files: { ...gist().files, 'private.json': { content: 'private transcript' } } },
+        gist(JSON.stringify({ ...snapshot, events: [{ prompt: 'private transcript' }] })),
+        gist(JSON.stringify({ ...snapshot, weeks: [{ week: '2026-09-28', models: { example: 10_001 } }] })),
+        gist('x'.repeat(520_000)),
+    ]) {
+        await assert.rejects(loadGistSnapshot('BYK', id, fetchGist(invalid)), /Could not load a valid weekly-count gist/);
+    }
+});
+
+test('a failed GitHub fetch does not leak its response body or error text', async () => {
+    await assert.rejects(loadGistSnapshot('BYK', id, async () =>
+        new Response('private transcript', { status: 403 })), (error) =>
+        error.message === 'Could not load a valid weekly-count gist.');
+    await assert.rejects(loadGistSnapshot('BYK', id, async () => {
+        throw new Error('private transcript');
+    }), (error) => error.message === 'Could not load a valid weekly-count gist.');
+});
+
+test('the browser renders a gist without sending its contents to Model Tides or injecting model labels', async () => {
+    const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
+    const originalDocument = globalThis.document;
+    const originalWindow = globalThis.window;
+    const originalFetch = globalThis.fetch;
+    try {
+        const element = () => ({ hidden: false, textContent: '', innerHTML: '', children: [], handlers: new Map(),
+            append(child) { this.children.push(child); },
+            replaceChildren(...children) { this.children = children; },
+            setAttribute() {},
+            addEventListener(type, handler) { this.handlers.set(type, handler); },
+        });
+        const items = Object.fromEntries(['app', 'theme-toggle', 'gist-status', 'gist-chart', 'gist-details',
+            'gist-table', 'gist-source'].map((name) => [name, element()]));
+        items.app.querySelector = (selector) => items[selector.slice(1)];
+        globalThis.document = {
+            documentElement: { dataset: {} },
+            querySelector: (selector) => selector === '#app' ? items.app : { content: '' },
+            createDocumentFragment: element,
+            createElement: element,
+        };
+        globalThis.window = {
+            location: { pathname: `/gist/BYK/${id}` },
+            matchMedia: () => ({ matches: false, addEventListener() {} }),
+        };
+        const calls = [];
+        globalThis.fetch = async (url) => {
+            calls.push(url);
+            return Response.json(gist(JSON.stringify({ ...snapshot, weeks: [
+                { week: '2026-09-28', models: { '<img src=x onerror=alert(1)>': 1 } },
+            ] })));
+        };
+        await server.ssrLoadModule('/src/gist-page.ts');
+        await new Promise(setImmediate);
+        assert.deepEqual(calls, [`https://api.github.com/gists/${id}`]);
+        assert.doesNotMatch(items.app.innerHTML + items['gist-chart'].innerHTML, /<img src=x/);
+        assert.match(items['gist-chart'].innerHTML, /&lt;img src=x/);
+        assert.match(items['gist-status'].textContent, /1 self-reported model uses/);
+        assert.equal(items['gist-details'].hidden, false);
+        assert.equal(items['gist-source'].href, `https://gist.github.com/BYK/${id}`);
+    } finally {
+        globalThis.fetch = originalFetch;
+        globalThis.window = originalWindow;
+        globalThis.document = originalDocument;
+        await server.close();
+    }
+});

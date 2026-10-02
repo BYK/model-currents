@@ -126,16 +126,18 @@ export function exportLocalMetadata(sources, onProgress) {
     return document;
 }
 
-export async function publishSnapshot(snapshot, owner = null, fetchImpl = fetch, endpoint = api) {
+export async function publishSnapshot(snapshot, owner = null, fetchImpl = fetch, endpoint = api, published = null) {
+    if (owner && typeof published !== 'boolean') throw new TypeError('Expected report visibility.');
     const body = brotliCompressSync(Buffer.from(JSON.stringify(snapshot)));
-    const response = await fetchImpl(owner ? `${endpoint}/${owner.id}` : endpoint, {
+    const response = await fetchImpl(owner ? `${endpoint}/${owner.id}` : `${endpoint}/private`, {
         method: owner ? 'PUT' : 'POST',
         headers: {
             'Content-Type': 'application/vnd.model-tides.weekly+json',
             'Content-Encoding': 'br',
             'X-Model-Tides-Schema': 'weekly-v1',
             ...(!owner ? { 'X-Model-Tides-Report': 'private-v1' } : {}),
-            ...(owner ? { Authorization: `Bearer ${owner.token}` } : {}),
+            ...(owner ? { Authorization: `Bearer ${owner.token}`,
+                'X-Model-Tides-Expected-Visibility': published ? 'public' : 'private' } : {}),
         },
         body,
     });
@@ -154,6 +156,22 @@ export async function setSharing(owner, published, fetchImpl = fetch, endpoint =
         throw new Error('Invalid sharing response.');
     }
     return result;
+}
+
+export async function reportVisibility(owner, fetchImpl = fetch, endpoint = api) {
+    try {
+        const response = await fetchImpl(`${endpoint}/${owner.id}`, {
+            headers: { Authorization: `Bearer ${owner.token}` }, cache: 'no-store',
+        });
+        if (!response.ok) throw new TypeError('Unknown visibility.');
+        const result = await response.json();
+        if (!result || result.id !== owner.id || typeof result.published !== 'boolean') {
+            throw new TypeError('Unknown visibility.');
+        }
+        return result.published;
+    } catch {
+        throw new Error('Could not confirm personal report visibility. No upload was started.');
+    }
 }
 
 function loadCredential() {
@@ -231,10 +249,20 @@ async function main() {
         if (created.error?.code === 'ENOENT') throw new Error('GitHub CLI (gh) is required to create a gist.');
         if (created.error || created.status !== 0) throw new Error('Could not create the unlisted gist. Check that gh is authenticated with gist access.');
         const url = created.stdout.trim();
-        if (!/^https:\/\/gist\.github\.com\/(?:[A-Za-z0-9-]+\/)?[a-f0-9]{32}$/.test(url)) {
+        const match = /^https:\/\/gist\.github\.com\/(?:(\w[\w-]{0,38})\/)?([a-f0-9]{32})$/.exec(url);
+        if (!match) {
             throw new Error('GitHub CLI returned an invalid gist URL.');
         }
         console.log(`Unlisted gist: ${url}`);
+        const identity = match[1] ? null : spawnSync('gh', ['api', 'user', '--jq', '.login'], {
+            encoding: 'utf8', timeout: 10_000, maxBuffer: 256,
+        });
+        const owner = match[1] ?? (identity?.status === 0 ? identity.stdout.trim() : '');
+        if (/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(owner)) {
+            console.log(`View in browser: https://modeltides.dev/gist/${owner}/${match[2]}`);
+        } else {
+            console.log('The gist was created. Its Model Tides viewer link could not be determined; open the gist URL above.');
+        }
         return;
     }
     if (args[0] === 'link') {
@@ -294,9 +322,17 @@ async function main() {
         : exportLocal(sources, console.log);
     console.log(`Checked ${sources.map(({ name }) => name).join(', ')}. The following weekly counts would be uploaded:`);
     preview(snapshot);
-    console.log('Only the displayed weeks, model names, and counts are uploaded. No prompts, replies, paths, exact times, or session IDs. Your personal report stays private until you share it.');
+    console.log('Only the displayed weeks, model names, and counts are uploaded. No prompts, replies, paths, exact times, or session IDs.');
+    const published = owner ? await reportVisibility(owner) : false;
+    if (owner) {
+        console.log(published
+            ? 'Your personal report is already public. These reviewed counts will be public immediately after replacement.'
+            : 'Your personal report is private. Replacing these weeks keeps it private.');
+    } else {
+        console.log('Your new personal report stays private until you choose to share it.');
+    }
     if (!await confirm(owner ? 'Replace these weeks in your existing contribution?' : 'Upload to the aggregate and save a private key locally?')) return;
-    const result = await publishSnapshot(snapshot, owner);
+    const result = await publishSnapshot(snapshot, owner, fetch, api, published);
     if (!result || !/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(result.id) ||
         result.id !== (owner?.id ?? result.id) || typeof result.published !== 'boolean' ||
         (!owner && (typeof result.token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(result.token)))) {

@@ -15,13 +15,16 @@ test('the Worker serves app assets and keeps future dynamic routes out of static
     assert.equal(await image.text(), 'asset');
     const privateView = await worker.fetch(new Request('https://modeltides.dev/local/'), env);
     assert.equal(await privateView.text(), 'asset');
+    const gistView = await worker.fetch(new Request('https://modeltides.dev/gist/BYK/1feed6ae2071f64565d1f1e092fdde32'), env);
+    assert.equal(await gistView.text(), 'asset');
 
     for (const path of ['/api/future', '/api/models', '/u/public-id', '/og/public-id.png']) {
         const response = await worker.fetch(new Request(`https://modeltides.dev${path}`), env);
         assert.equal(response.status, 404);
         assert.equal(response.headers.get('Cache-Control'), 'no-store');
     }
-    assert.deepEqual(requests, ['https://modeltides.dev/', 'https://modeltides.dev/assets/image.svg', 'https://modeltides.dev/']);
+    assert.deepEqual(requests, ['https://modeltides.dev/', 'https://modeltides.dev/assets/image.svg',
+        'https://modeltides.dev/', 'https://modeltides.dev/'], 'gist routes serve only the app shell');
     const missingBinding = await worker.fetch(new Request('https://modeltides.dev/api/aggregate'), env);
     assert.equal(missingBinding.status, 503);
 });

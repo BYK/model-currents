@@ -56,7 +56,7 @@ const snapshot = (count = 2) => ({
 const limit = { async limit() { return { success: true }; } };
 const handleContributions = handleRealContributions;
 
-function upload(data, pathname = '/api/contributions', method = 'POST', token) {
+function upload(data, pathname = '/api/contributions/private', method = 'POST', token, visibility = 'private') {
     const bytes = brotliCompressSync(Buffer.from(JSON.stringify(data)));
     return new Request(`https://modeltides.dev${pathname}`, {
         method, body: bytes,
@@ -65,6 +65,7 @@ function upload(data, pathname = '/api/contributions', method = 'POST', token) {
             'Content-Encoding': 'br',
             'X-Model-Tides-Schema': 'weekly-v1',
             'X-Model-Tides-Report': 'private-v1',
+            ...(method === 'PUT' ? { 'X-Model-Tides-Expected-Visibility': visibility } : {}),
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
     });
@@ -80,6 +81,26 @@ test('weekly snapshot copies only week, model, and event count', () => {
     for (const privateValue of ['sessionId', 'private-one', 'private-two', 'text', 'private prompt', 'fromModel', 'fromTime']) {
         assert.equal(wire.includes(privateValue), false);
     }
+});
+
+test('new private creation uses a path the old Worker cannot treat as a public contribution', async () => {
+    const db = database();
+    try {
+        const path = '/api/contributions/private';
+        const env = { DB: db, UPLOAD_LIMIT: limit, ASSETS: { async fetch() { return new Response('asset'); } } };
+        const created = await worker.fetch(upload(snapshot(), path), env);
+        assert.equal(created.status, 201);
+        const { id, token, published } = await created.json();
+        assert.equal(published, false);
+        assert.equal((await db.prepare('SELECT published FROM contributors WHERE id = ?').bind(id).first()).published, 0);
+        assert.equal((await worker.fetch(new Request(`https://modeltides.dev/u/${id}`), env)).status, 404);
+        assert.equal((await worker.fetch(new Request(`https://modeltides.dev/api/contributions/${id}`, {
+            headers: { Authorization: `Bearer ${token}` },
+        }), env)).status, 200);
+        const oldPath = await worker.fetch(upload(snapshot(), '/api/contributions'), env);
+        assert.equal(oldPath.status, 426, 'old clients must not create contributions at the unversioned path');
+        assert.equal((await db.prepare('SELECT count(*) AS count FROM contributors').first()).count, 1);
+    } finally { db.close(); }
 });
 
 test('local preview rejects dates the upload endpoint cannot accept', () => {
@@ -111,7 +132,7 @@ test('reviewed historical and route-specific model IDs can be shared without a r
             'anthropic/claude-3-5-haiku-latest': 1, 'github-copilot/claude-opus-4.5': 2,
             'openrouter/inclusionai/ling-3.0-flash-vl:free': 3, 'xai/grok-4-fast': 4,
         } }] };
-        const created = await handleContributions(upload(historical), db, limit, '/api/contributions');
+        const created = await handleContributions(upload(historical), db, limit, '/api/contributions/private');
         assert.equal(created.status, 201);
         const { id, token } = await created.json();
         const path = `/api/contributions/${id}`;
@@ -130,7 +151,7 @@ test('reviewed historical and route-specific model IDs can be shared without a r
 test('Brotli upload saves a private contribution; replacing weeks does not add duplicate counts', async () => {
     const db = database();
     try {
-        const created = await handleContributions(upload(snapshot()), db, limit, '/api/contributions');
+        const created = await handleContributions(upload(snapshot()), db, limit, '/api/contributions/private');
         assert.equal(created.status, 201);
         const { id, url, token } = await created.json();
         assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-7/);
@@ -182,7 +203,7 @@ test('Brotli upload saves a private contribution; replacing weeks does not add d
 test('new uploads count toward the aggregate without exposing a personal report until the owner shares', async () => {
     const db = database();
     try {
-        const created = await handleContributions(upload(snapshot()), db, limit, '/api/contributions');
+        const created = await handleContributions(upload(snapshot()), db, limit, '/api/contributions/private');
         assert.equal(created.status, 201);
         const { id, token, published, url } = await created.json();
         assert.equal(published, false);
@@ -214,7 +235,7 @@ test('new uploads count toward the aggregate without exposing a personal report 
         assert.equal((await read(path, 'A'.repeat(43))).status, 404, 'a public report never validates an invalid private key');
         assert.equal((await read(`/u/${id}`)).status, 200);
         assert.equal((await read(`/og/${id}.png`, null, 'HEAD')).status, 200);
-        const replacedWhileShared = await handleContributions(upload(snapshot(3), path, 'PUT', token), db, limit, path);
+        const replacedWhileShared = await handleContributions(upload(snapshot(3), path, 'PUT', token, 'public'), db, limit, path);
         assert.equal((await replacedWhileShared.json()).published, true);
         assert.equal((await getReport(db, id)).total, 3);
 
@@ -232,6 +253,25 @@ test('new uploads count toward the aggregate without exposing a personal report 
         assert.equal((await replacedWhilePrivate.json()).published, false);
         assert.equal((await read(path)).status, 404);
         assert.equal(await getReport(db, id), null);
+    } finally { db.close(); }
+});
+
+test('replacement refuses to publish counts if another owner session shared the report after preview', async () => {
+    const db = database();
+    try {
+        const created = await handleContributions(upload(snapshot()), db, limit, '/api/contributions/private');
+        const { id, token } = await created.json();
+        const path = `/api/contributions/${id}`;
+        const sharePath = `${path}/share`;
+        assert.equal((await handleContributions(new Request(`https://modeltides.dev${sharePath}`, {
+            method: 'POST', headers: { Authorization: `Bearer ${token}` },
+        }), db, limit, sharePath)).status, 200);
+        const outdated = await handleContributions(upload(snapshot(9), path, 'PUT', token, 'private'), db, limit, path);
+        assert.equal(outdated.status, 409);
+        assert.equal((await getReport(db, id)).total, 2, 'mismatched visibility never writes the reviewed counts');
+        const reviewed = await handleContributions(upload(snapshot(9), path, 'PUT', token, 'public'), db, limit, path);
+        assert.equal(reviewed.status, 200);
+        assert.equal((await getReport(db, id)).total, 9);
     } finally { db.close(); }
 });
 
@@ -253,11 +293,11 @@ test('aggregate hides sparse cells and reports self-reported counts only with fi
         const aggregate = () => handleContributions(new Request('https://modeltides.dev/api/aggregate'), db, limit, '/api/aggregate');
         const ids = [];
         for (const _index of [1, 2, 3, 4]) {
-            const created = await handleContributions(upload(snapshot()), db, limit, '/api/contributions');
+            const created = await handleContributions(upload(snapshot()), db, limit, '/api/contributions/private');
             ids.push(await created.json());
         }
         assert.deepEqual((await (await aggregate()).json()).weeks, []);
-        const fifth = await handleContributions(upload(snapshot(7)), db, limit, '/api/contributions');
+        const fifth = await handleContributions(upload(snapshot(7)), db, limit, '/api/contributions/private');
         ids.push(await fifth.json());
         assert.deepEqual((await (await aggregate()).json()).weeks, [{
             week: '2026-09-28', model: 'anthropic/claude-sonnet', count: 15, contributors: 5,
@@ -278,14 +318,16 @@ test('headers and rate limit reject invalid uploads before body is read or datab
         const badType = new Request('https://modeltides.dev/api/contributions', { method: 'POST', body: 'private transcript' });
         assert.equal((await handleContributions(badType, db, rejectLimit, '/api/contributions')).status, 415);
         assert.equal(called, 0);
-        const oldClient = upload(snapshot());
+        const oldClient = upload(snapshot(), '/api/contributions');
         oldClient.headers.delete('X-Model-Tides-Report');
         assert.equal((await handleContributions(oldClient, db, rejectLimit, '/api/contributions')).status, 426);
+        assert.equal((await handleContributions(upload(snapshot(), '/api/contributions'), db, rejectLimit,
+            '/api/contributions')).status, 426, 'the old path cannot create even with the new header');
         assert.equal(called, 0);
         assert.equal((await db.prepare('SELECT count(*) AS count FROM contributors').first()).count, 0);
-        assert.equal((await handleContributions(upload(snapshot()), db, rejectLimit, '/api/contributions')).status, 429);
+        assert.equal((await handleContributions(upload(snapshot()), db, rejectLimit, '/api/contributions/private')).status, 429);
         assert.equal(called, 1);
-        const tooLarge = new Request('https://modeltides.dev/api/contributions', {
+        const tooLarge = new Request('https://modeltides.dev/api/contributions/private', {
             method: 'POST', body: 'private transcript',
             headers: {
                 'Content-Type': 'application/vnd.model-tides.weekly+json',
@@ -293,11 +335,16 @@ test('headers and rate limit reject invalid uploads before body is read or datab
                 'Content-Length': '65537',
             },
         });
-        assert.equal((await handleContributions(tooLarge, db, limit, '/api/contributions')).status, 413);
+        assert.equal((await handleContributions(tooLarge, db, limit, '/api/contributions/private')).status, 413);
         const expanded = { ...snapshot(), note: 'x'.repeat(600_000) };
-        assert.equal((await handleContributions(upload(expanded), db, limit, '/api/contributions')).status, 400);
-        const created = await handleContributions(upload(snapshot()), db, limit, '/api/contributions');
-        const { id } = await created.json();
+        assert.equal((await handleContributions(upload(expanded), db, limit, '/api/contributions/private')).status, 400);
+        const created = await handleContributions(upload(snapshot()), db, limit, '/api/contributions/private');
+        const { id, token } = await created.json();
+        const olderReplace = upload(snapshot(4), `/api/contributions/${id}`, 'PUT', token);
+        olderReplace.headers.delete('X-Model-Tides-Expected-Visibility');
+        assert.equal((await handleContributions(olderReplace, db, rejectLimit,
+            `/api/contributions/${id}`)).status, 426);
+        assert.equal(called, 1, 'an old client cannot replace without an explicit visibility check');
         const keys = [];
         const record = { async limit({ key }) { keys.push(key); return { success: true }; } };
         const denied = await handleContributions(upload(snapshot(4), `/api/contributions/${id}`, 'PUT', 'A'.repeat(43)),

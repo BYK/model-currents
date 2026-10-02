@@ -21,7 +21,11 @@ const exampleRows: AggregateRow[] = [
     { week: '2026-03-09', model: 'anthropic/claude-sonnet-4-5', count: 4, contributors: 5 },
 ];
 
-function renderRows(chart: HTMLElement, rows: AggregateRow[], example: boolean): void {
+export function renderWeeklyRows(
+    chart: HTMLElement, rows: readonly Pick<AggregateRow, 'week' | 'model' | 'count'>[], source: 'mock' | 'shared' | 'gist',
+): void {
+    const example = source === 'mock';
+    const label = example ? 'mock' : source === 'gist' ? 'gist' : 'shared';
     const totals = new Map<string, number>();
     for (const { model, count } of rows) totals.set(model, (totals.get(model) ?? 0) + count);
     const ordered = [...totals].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
@@ -37,14 +41,15 @@ function renderRows(chart: HTMLElement, rows: AggregateRow[], example: boolean):
         displayKey: (model) => visible.has(model) ? model : 'Other models',
         colorFor: getModelColor,
         streamColorFor: (model) => getModelColor(model),
-        formatValue: (value) => `${value.toLocaleString('en-GB')} ${example ? 'mock' : 'shared'} uses`,
+        formatValue: (value) => `${value.toLocaleString('en-GB')} ${label} uses`,
         formatNodeTitle: ({ label, period, value }) => `${label} · ${period}\n${value.toLocaleString('en-GB')} ${example ? 'mock' : 'self-reported'} uses`,
         formatLinkTitle: ({ toLabel, toPeriod, value }) => `${toLabel} · ${toPeriod}\n${value.toLocaleString('en-GB')} ${example ? 'mock' : 'self-reported'} uses`,
         formatContinuityTitle: ({ label, fromPeriod, toPeriod }) => `${label}: appears in ${fromPeriod} and ${toPeriod}. This does not track people between periods.`,
         axisCaption: example ? 'EARLIER ← EXAMPLE MODEL COUNTS → LATER' : 'EARLIER ← REPORTED MODEL COUNTS → LATER',
         ariaLabel: example ? 'Mock example of weekly model counts' : 'Self-reported model counts by week, grouped into wider periods over longer histories',
     });
-    chart.setAttribute('aria-label', example ? 'Mock example of weekly model counts' : 'Shared model counts over time');
+    chart.setAttribute('aria-label', example ? 'Mock example of weekly model counts' :
+        source === 'gist' ? 'Unlisted gist model counts over time' : 'Shared model counts over time');
 }
 
 export async function loadGlobalView(chart: HTMLElement, status: HTMLElement, table: HTMLElement | null, showExample = false): Promise<void> {
@@ -59,12 +64,12 @@ export async function loadGlobalView(chart: HTMLElement, status: HTMLElement, ta
             status.textContent = showExample
                 ? 'Mock data · public counts appear after five contributors share a model and week.'
                 : 'No weekly model has five contributors yet. Your local history still works without sharing.';
-            if (showExample) renderRows(chart, exampleRows, true);
+            if (showExample) renderWeeklyRows(chart, exampleRows, 'mock');
             else chart.replaceChildren();
             table?.replaceChildren();
             return;
         }
-        renderRows(chart, rows, false);
+        renderWeeklyRows(chart, rows, 'shared');
         const total = rows.reduce((sum, row) => sum + row.count, 0);
         const summary = `${total.toLocaleString('en-GB')} shared model uses · ${new Set(rows.map(({ week }) => week)).size} visible weeks`;
         status.textContent = showExample ? `${summary}${data.truncated ? ' · first 3,000 cells shown' : ''}` :
@@ -86,6 +91,6 @@ export async function loadGlobalView(chart: HTMLElement, status: HTMLElement, ta
     } catch {
         status.textContent = showExample ? 'Shared counts are unavailable. This chart uses mock data.'
             : 'The shared timeline is unavailable. Your local history still works.';
-        if (showExample) renderRows(chart, exampleRows, true);
+        if (showExample) renderWeeklyRows(chart, exampleRows, 'mock');
     }
 }
