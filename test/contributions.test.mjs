@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { handleContributions as handleRealContributions, parseSnapshot } from '../worker/contributions.ts';
 import { getReport } from '../worker/public-pages.ts';
 import worker from '../worker/index.ts';
-import { buildWeeklySnapshot, parseOwnedReport } from '../src/weekly-snapshot.ts';
+import { buildWeeklySnapshot, parseOwnedReport, parsePublicReport } from '../src/weekly-snapshot.ts';
 
 function database(migrated = true) {
     const sqlite = new DatabaseSync(':memory:');
@@ -16,6 +16,7 @@ function database(migrated = true) {
     const migrate = () => {
         sqlite.exec(readFileSync(new URL('../migrations/0002_private_contributions.sql', import.meta.url), 'utf8'));
         sqlite.exec(readFileSync(new URL('../migrations/0003_counts_revision.sql', import.meta.url), 'utf8'));
+        sqlite.exec(readFileSync(new URL('../migrations/0004_personal_reports.sql', import.meta.url), 'utf8'));
     };
     if (migrated) migrate();
     const prepare = (sql) => {
@@ -66,7 +67,7 @@ const snapshot = (count = 2) => ({
 const limit = { async limit() { return { success: true }; } };
 const handleContributions = handleRealContributions;
 
-function upload(data, pathname = '/api/contributions/private', method = 'POST', token, visibility = 'private') {
+function upload(data, pathname = '/api/contributions/private', method = 'POST', token, visibility = 'private', aggregate = 'included') {
     const bytes = brotliCompressSync(Buffer.from(JSON.stringify(data)));
     return new Request(`https://modeltides.dev${pathname}`, {
         method, body: bytes,
@@ -74,8 +75,9 @@ function upload(data, pathname = '/api/contributions/private', method = 'POST', 
             'Content-Type': 'application/vnd.model-tides.weekly+json',
             'Content-Encoding': 'br',
             'X-Model-Tides-Schema': 'weekly-v1',
-            'X-Model-Tides-Report': 'private-v1',
-            ...(method === 'PUT' ? { 'X-Model-Tides-Expected-Visibility': visibility } : {}),
+            'X-Model-Tides-Report': pathname === '/api/contributions/personal' ? 'personal-v1' : 'private-v1',
+            ...(method === 'PUT' ? { 'X-Model-Tides-Expected-Visibility': visibility,
+                'X-Model-Tides-Expected-Aggregate': aggregate } : {}),
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
     });
@@ -97,7 +99,7 @@ test('new private creation uses a path the old Worker cannot treat as a public c
     const db = database();
     try {
         const path = '/api/contributions/private';
-        const env = { DB: db, UPLOAD_LIMIT: limit, ASSETS: { async fetch() { return new Response('asset'); } } };
+        const env = { DB: db, UPLOAD_LIMIT: limit, ASSETS: { async fetch() { return new Response('<html><head></head><body><div id="app"></div></body></html>'); } } };
         const created = await worker.fetch(upload(snapshot(), path), env);
         assert.equal(created.status, 201);
         const { id, token, published } = await created.json();
@@ -110,6 +112,68 @@ test('new private creation uses a path the old Worker cannot treat as a public c
         const oldPath = await worker.fetch(upload(snapshot(), '/api/contributions'), env);
         assert.equal(oldPath.status, 426, 'old clients must not create contributions at the unversioned path');
         assert.equal((await db.prepare('SELECT count(*) AS count FROM contributors').first()).count, 1);
+    } finally { db.close(); }
+});
+
+test('personal upload has a working link but never enters aggregate until separate consent', async () => {
+    const db = database();
+    try {
+        const path = '/api/contributions/personal';
+        const created = await handleContributions(upload(snapshot(), path), db, limit, path);
+        assert.equal(created.status, 201);
+        const { id, token, url } = await created.json();
+        assert.equal(url, `https://modeltides.dev/u/${id}`);
+        assert.equal((await db.prepare('SELECT count(*) AS count FROM weekly_counts WHERE contributor_id = ?').bind(id).first()).count, 1);
+        assert.equal((await db.prepare('SELECT in_aggregate FROM contributors WHERE id = ?').bind(id).first()).in_aggregate, 0);
+        assert.equal((await getReport(db, id)).total, 2);
+        const env = { DB: db, UPLOAD_LIMIT: limit, ASSETS: { async fetch() {
+            return new Response('<html><head><title>Model Tides</title></head><body><div id="app"></div><script type="module" src="/assets/index-hashed.js"></script></body></html>');
+        } } };
+        const page = await worker.fetch(new Request(`https://modeltides.dev/u/${id}`), env);
+        assert.equal(page.status, 200);
+        assert.match(await page.text(), /<script type="module" src="\/assets\/index-hashed\.js"><\/script>/);
+        assert.equal((await worker.fetch(new Request(`https://modeltides.dev/u/${id}`, { method: 'HEAD' }), env)).status, 200);
+        const aggregate = await handleContributions(new Request('https://modeltides.dev/api/aggregate'), db, limit, '/api/aggregate');
+        assert.deepEqual((await aggregate.json()).weeks, []);
+        const owner = await handleContributions(new Request(`https://modeltides.dev/api/contributions/${id}`, {
+            headers: { Authorization: `Bearer ${token}` },
+        }), db, limit, `/api/contributions/${id}`);
+        assert.equal((await owner.json()).inAggregate, false);
+        const contributePath = `/api/contributions/${id}/contribute`;
+        const contribute = await handleContributions(new Request(`https://modeltides.dev${contributePath}`, {
+            method: 'POST', headers: { Authorization: `Bearer ${token}`, 'X-Model-Tides-Reviewed-Revision': '0' },
+        }), db, limit, contributePath);
+        assert.equal(contribute.status, 200);
+        assert.equal((await db.prepare('SELECT in_aggregate FROM contributors WHERE id = ?').bind(id).first()).in_aggregate, 1);
+        const withdrawPath = `/api/contributions/${id}/withdraw`;
+        const withdraw = await handleContributions(new Request(`https://modeltides.dev${withdrawPath}`, {
+            method: 'POST', headers: { Authorization: `Bearer ${token}` },
+        }), db, limit, withdrawPath);
+        assert.equal(withdraw.status, 200);
+        assert.equal((await db.prepare('SELECT in_aggregate FROM contributors WHERE id = ?').bind(id).first()).in_aggregate, 0);
+        assert.equal((await getReport(db, id)).total, 2, 'withdrawal retains the personal link and data');
+        const delayed = await handleContributions(new Request(`https://modeltides.dev${contributePath}`, {
+            method: 'POST', headers: { Authorization: `Bearer ${token}`, 'X-Model-Tides-Reviewed-Revision': '0' },
+        }), db, limit, contributePath);
+        assert.equal(delayed.status, 409);
+    } finally { db.close(); }
+});
+
+test('replacement cannot silently enter the aggregate after participation changes since preview', async () => {
+    const db = database();
+    try {
+        const path = '/api/contributions/personal';
+        const { id, token } = await (await handleContributions(upload(snapshot(), path), db, limit, path)).json();
+        const contribute = `/api/contributions/${id}/contribute`;
+        assert.equal((await handleContributions(new Request(`https://modeltides.dev${contribute}`, {
+            method: 'POST', headers: { Authorization: `Bearer ${token}`, 'X-Model-Tides-Reviewed-Revision': '0' },
+        }), db, limit, contribute)).status, 200);
+        const replace = `/api/contributions/${id}`;
+        const stale = upload(snapshot(9), replace, 'PUT', token, 'public');
+        stale.headers.set('X-Model-Tides-Expected-Aggregate', 'excluded');
+        const result = await handleContributions(stale, db, limit, replace);
+        assert.equal(result.status, 409);
+        assert.equal((await getReport(db, id)).total, 2);
     } finally { db.close(); }
 });
 
@@ -171,6 +235,16 @@ test('owner review rejects malformed counts, duplicate cells, and untrusted revi
         { ...report, counts: [] }, { ...report, counts: [{ ...report.counts[0], week: '2026-09-27' }] },
         { ...report, events: [{ text: 'private prompt' }] },
     ]) assert.throws(() => parseOwnedReport(invalid, id), TypeError);
+});
+
+test('public report parsing rejects hidden, extra-field, and malformed response data', () => {
+    const id = '0199abcf-22aa-7333-8abc-0123456789ab';
+    const valid = { id, published: true, counts: [{ week: '2026-09-28', model: 'openai/gpt-5', count: 2 }] };
+    assert.deepEqual(parsePublicReport(valid, id).weeks, [{ week: '2026-09-28', models: { 'openai/gpt-5': 2 } }]);
+    for (const invalid of [{ ...valid, published: false }, { ...valid, token: 'private' },
+        { ...valid, counts: [{ ...valid.counts[0], model: '<script>', prompt: 'private' }] }]) {
+        assert.throws(() => parsePublicReport(invalid, id), TypeError);
+    }
 });
 
 test('reviewed historical and route-specific model IDs can be shared without a registry request', async () => {
@@ -257,7 +331,7 @@ test('new uploads count toward the aggregate without exposing a personal report 
         assert.equal(published, false);
         assert.equal(url, undefined);
         const path = `/api/contributions/${id}`;
-        const env = { DB: db, UPLOAD_LIMIT: limit, ASSETS: { async fetch() { return new Response('asset'); } } };
+        const env = { DB: db, UPLOAD_LIMIT: limit, ASSETS: { async fetch() { return new Response('<html><head></head><body><div id="app"></div></body></html>'); } } };
         const read = (pathname, auth, method = 'GET') => worker.fetch(new Request(`https://modeltides.dev${pathname}`, {
             method, headers: auth ? { Authorization: `Bearer ${auth}` } : {},
         }), env);
@@ -510,7 +584,7 @@ test('an oversized migrated report returns only a bounded owner summary and can 
         const result = await handleContributions(new Request(`https://modeltides.dev${path}`, {
             headers: { Authorization: `Bearer ${token}` },
         }), db, limit, path);
-        assert.deepEqual(await result.json(), { id, published: true, revision: 0, tooLarge: true });
+        assert.deepEqual(await result.json(), { id, published: true, inAggregate: true, revision: 0, tooLarge: true });
         assert.equal((await handleContributions(new Request(`https://modeltides.dev${path}/unshare`, {
             method: 'POST', headers: { Authorization: `Bearer ${token}` },
         }), db, limit, `${path}/unshare`)).status, 200);
@@ -554,8 +628,8 @@ test('existing links remain public when the publication migration is applied', a
         await db.prepare('INSERT INTO weekly_counts (contributor_id, week, model, count) VALUES (?, ?, ?, ?)')
             .bind(id, '2026-09-28', 'openai/gpt-5', 1).run();
         db.migrate();
-        assert.deepEqual({ ...await db.prepare('SELECT published, report_revision FROM contributors WHERE id = ?').bind(id).first() },
-            { published: 1, report_revision: 0 });
+        assert.deepEqual({ ...await db.prepare('SELECT published, report_revision, in_aggregate FROM contributors WHERE id = ?').bind(id).first() },
+            { published: 1, report_revision: 0, in_aggregate: 1 });
         assert.equal((await getReport(db, id)).total, 1);
     } finally { db.close(); }
 });
@@ -580,6 +654,31 @@ test('aggregate hides sparse cells and reports self-reported counts only with fi
             method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
         }), db, limit, `/api/contributions/${id}`);
         assert.deepEqual((await (await aggregate()).json()).weeks, []);
+    } finally { db.close(); }
+});
+
+test('five personal links remain outside the aggregate until each owner opts in', async () => {
+    const db = database();
+    try {
+        const owners = [];
+        for (const _index of [1, 2, 3, 4, 5]) {
+            const created = await handleContributions(upload(snapshot(), '/api/contributions/personal'),
+                db, limit, '/api/contributions/personal');
+            owners.push(await created.json());
+        }
+        const aggregate = async () => (await handleContributions(new Request('https://modeltides.dev/api/aggregate'),
+            db, limit, '/api/aggregate')).json();
+        assert.deepEqual((await aggregate()).weeks, []);
+        for (const { id, token } of owners) {
+            const path = `/api/contributions/${id}/contribute`;
+            const result = await handleContributions(new Request(`https://modeltides.dev${path}`, {
+                method: 'POST', headers: { Authorization: `Bearer ${token}`, 'X-Model-Tides-Reviewed-Revision': '0' },
+            }), db, limit, path);
+            assert.equal(result.status, 200);
+        }
+        assert.deepEqual((await aggregate()).weeks, [{
+            week: '2026-09-28', model: 'anthropic/claude-sonnet', count: 10, contributors: 5,
+        }]);
     } finally { db.close(); }
 });
 

@@ -20,6 +20,7 @@ export interface WeeklySnapshot {
 export interface OwnedReport {
     readonly id: string;
     readonly published: boolean;
+    readonly inAggregate: boolean | null;
     readonly revision: number;
     readonly snapshot: WeeklySnapshot | null;
 }
@@ -81,13 +82,15 @@ export function parseSnapshot(input: unknown): WeeklySnapshot {
 }
 
 export function parseOwnedReport(input: unknown, id: string): OwnedReport {
-    const oversized = exactKeys(input, ['id', 'published', 'revision', 'tooLarge']) && input.tooLarge === true;
-    if ((!oversized && !exactKeys(input, ['id', 'counts', 'published', 'revision'])) || input.id !== id ||
+    const hasAggregate = input !== null && typeof input === 'object' && 'inAggregate' in input;
+    const oversized = exactKeys(input, ['id', 'published', 'revision', 'tooLarge', ...(hasAggregate ? ['inAggregate'] : [])]) && input.tooLarge === true;
+    if ((!oversized && !exactKeys(input, ['id', 'counts', 'published', 'revision', ...(hasAggregate ? ['inAggregate'] : [])])) || input.id !== id ||
         typeof input.published !== 'boolean' || !Number.isSafeInteger(input.revision) ||
-        (input.revision as number) < 0) {
+        (input.revision as number) < 0 || (hasAggregate && typeof input.inAggregate !== 'boolean')) {
         throw new TypeError('Invalid personal report.');
     }
-    if (oversized) return { id, published: input.published as boolean, revision: input.revision as number, snapshot: null };
+    const inAggregate = hasAggregate ? input.inAggregate as boolean : null;
+    if (oversized) return { id, published: input.published as boolean, inAggregate, revision: input.revision as number, snapshot: null };
     if (!Array.isArray(input.counts) || input.counts.length < 1 || input.counts.length > MAX_REVIEW_CELLS) {
         throw new TypeError('Invalid personal report.');
     }
@@ -107,7 +110,16 @@ export function parseOwnedReport(input: unknown, id: string): OwnedReport {
         weeks: [...weeks].sort(([a], [b]) => a.localeCompare(b)).map(([week, models]) => ({
             week, models: Object.fromEntries([...models].sort(([a], [b]) => a.localeCompare(b))),
         })) }, 2048, MAX_REVIEW_CELLS);
-    return { id, published: input.published, revision: input.revision as number, snapshot };
+    return { id, published: input.published, inAggregate, revision: input.revision as number, snapshot };
+}
+
+export function parsePublicReport(input: unknown, id: string): WeeklySnapshot {
+    if (!exactKeys(input, ['id', 'counts', 'published']) || input.id !== id || input.published !== true) {
+        throw new TypeError('Invalid public report.');
+    }
+    const report = parseOwnedReport({ ...input, revision: 0 }, id);
+    if (!report.snapshot) throw new TypeError('Public report is too large to explore.');
+    return report.snapshot;
 }
 
 export function buildWeeklySnapshot(events: Iterable<Pick<UsageEvent, 'time' | 'model'>>): WeeklySnapshot {

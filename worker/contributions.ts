@@ -100,21 +100,23 @@ function rows(snapshot: WeeklySnapshot): { week: string; model: string; count: n
         Object.entries(models).map(([model, count]) => ({ week, model, count })));
 }
 
-function insertRows(db: Database, id: string, entries: ReturnType<typeof rows>, hash?: string, expectedPublished?: number): Statement[] {
+function insertRows(db: Database, id: string, entries: ReturnType<typeof rows>, hash?: string, expectedPublished?: number, expectedAggregate?: number): Statement[] {
     const statements: Statement[] = [];
     const perRow = hash ? 3 : 4;
-    const fixed = hash ? 4 : 0;
+    const fixed = hash ? 5 : 0;
     const batchSize = Math.floor((maxD1Parameters - fixed) / perRow);
     for (let start = 0; start < entries.length; start += batchSize) {
         const slice = entries.slice(start, start + batchSize);
         const values = slice.flatMap((entry) => [entry.week, entry.model, entry.count]);
         if (hash) {
-            if (expectedPublished !== 0 && expectedPublished !== 1) throw new TypeError('Expected report visibility.');
+            if ((expectedPublished !== 0 && expectedPublished !== 1) || (expectedAggregate !== 0 && expectedAggregate !== 1)) {
+                throw new TypeError('Expected report state.');
+            }
             const sql = `WITH input(week, model, count) AS (VALUES ${slice.map(() => '(?, ?, ?)').join(', ')})
                 INSERT INTO weekly_counts (contributor_id, week, model, count)
                 SELECT ?, week, model, count FROM input WHERE EXISTS
-                (SELECT 1 FROM contributors WHERE id = ? AND token_hash = ? AND published = ?)`;
-            statements.push(db.prepare(sql).bind(...values, id, id, hash, expectedPublished));
+                (SELECT 1 FROM contributors WHERE id = ? AND token_hash = ? AND published = ? AND in_aggregate = ?)`;
+            statements.push(db.prepare(sql).bind(...values, id, id, hash, expectedPublished, expectedAggregate));
         } else {
             const sql = `INSERT INTO weekly_counts (contributor_id, week, model, count) VALUES ${slice.map(() => '(?, ?, ?, ?)').join(', ')}`;
             statements.push(db.prepare(sql).bind(...slice.flatMap((entry) => [id, entry.week, entry.model, entry.count])));
@@ -131,8 +133,10 @@ export async function getAggregate(db: Database): Promise<{
     weeks: { week: string; model: string; count: number; contributors: number }[];
     truncated: boolean;
 }> {
-    const { results } = await db.prepare(`SELECT week, model, SUM(count) AS count, COUNT(*) AS contributors
-        FROM weekly_counts GROUP BY week, model HAVING COUNT(*) >= 5 ORDER BY week, model LIMIT 3001`).all<{
+    const { results } = await db.prepare(`SELECT w.week, w.model, SUM(w.count) AS count, COUNT(*) AS contributors
+        FROM weekly_counts w JOIN contributors c ON c.id = w.contributor_id
+        WHERE c.in_aggregate = 1 GROUP BY w.week, w.model HAVING COUNT(*) >= 5
+        ORDER BY w.week, w.model LIMIT 3001`).all<{
         week: string; model: string; count: number; contributors: number;
     }>();
     return { weeks: results.slice(0, 3000), truncated: results.length > 3000 };
@@ -145,38 +149,45 @@ export async function handleContributions(
         return response({ ...await getAggregate(db), note: 'Self-reported; cells with fewer than five contributors are hidden.' });
     }
 
+    const personalCreatePath = '/api/contributions/personal';
     const privateCreatePath = '/api/contributions/private';
-    const match = /^\/api\/contributions\/([^/]+)(\/(?:rotate|share|unshare))?$/.exec(path);
-    if (path !== '/api/contributions' && path !== privateCreatePath && !match) return response({ error: 'Not found.' }, 404);
-    const id = path === privateCreatePath ? undefined : match?.[1];
+    const match = /^\/api\/contributions\/([^/]+)(\/(?:rotate|share|unshare|contribute|withdraw))?$/.exec(path);
+    if (path !== '/api/contributions' && path !== personalCreatePath && path !== privateCreatePath && !match) return response({ error: 'Not found.' }, 404);
+    const id = path === personalCreatePath || path === privateCreatePath ? undefined : match?.[1];
     if (id && !contributionId.test(id)) return response({ error: 'Not found.' }, 404);
     if (id && !match?.[2] && request.method === 'GET') {
         const authorization = request.headers.get('Authorization');
         const token = bearer(request);
         if (authorization !== null && !token) return response({ error: 'Private token required.' }, 401);
         const access = token ? 'c.token_hash = ?' : 'c.published = 1';
-        const { results } = await db.prepare(`SELECT w.week, w.model, w.count, c.published, c.report_revision
+        const { results } = await db.prepare(`SELECT w.week, w.model, w.count, c.published, c.report_revision, c.in_aggregate
             FROM contributors c JOIN weekly_counts w ON w.contributor_id = c.id
             WHERE c.id = ? AND ${access} ORDER BY w.week, w.model LIMIT ?`)
             .bind(id!, ...(token ? [await tokenHash(token)] : []), MAX_REVIEW_CELLS + 1).all<{
-                week: string; model: string; count: number; published: number; report_revision: number;
+                week: string; model: string; count: number; published: number; report_revision: number; in_aggregate: number;
             }>();
         if (!results.length) return response({ error: 'Not found.' }, 404);
         if (results.length > MAX_REVIEW_CELLS) return token
-            ? response({ id, published: results[0].published === 1, revision: results[0].report_revision, tooLarge: true })
+            ? response({ id, published: results[0].published === 1, inAggregate: results[0].in_aggregate === 1,
+                revision: results[0].report_revision, tooLarge: true })
             : response({ error: 'Report exceeds the display limit.' }, 413);
         return response({ id, counts: results.map(({ week, model, count }) => ({ week, model, count })),
-            published: results[0].published === 1, ...(token ? { revision: results[0].report_revision } : {}) });
+            published: results[0].published === 1, ...(token ? {
+                inAggregate: results[0].in_aggregate === 1, revision: results[0].report_revision,
+            } : {}) });
     }
 
-    const isCreate = path === privateCreatePath && request.method === 'POST';
+    const isPersonalCreate = path === personalCreatePath && request.method === 'POST';
+    const isCreate = (path === personalCreatePath || path === privateCreatePath) && request.method === 'POST';
     const isLegacyCreate = path === '/api/contributions' && request.method === 'POST';
     const isReplace = !!id && !match?.[2] && request.method === 'PUT';
     const isDelete = !!id && !match?.[2] && request.method === 'DELETE';
     const isRotate = !!id && match?.[2] === '/rotate' && request.method === 'POST';
     const isShare = !!id && match?.[2] === '/share' && request.method === 'POST';
     const isUnshare = !!id && match?.[2] === '/unshare' && request.method === 'POST';
-    if (!isCreate && !isLegacyCreate && !isReplace && !isDelete && !isRotate && !isShare && !isUnshare) {
+    const isContribute = !!id && match?.[2] === '/contribute' && request.method === 'POST';
+    const isWithdraw = !!id && match?.[2] === '/withdraw' && request.method === 'POST';
+    if (!isCreate && !isLegacyCreate && !isReplace && !isDelete && !isRotate && !isShare && !isUnshare && !isContribute && !isWithdraw) {
         return response({ error: 'Method not allowed.' }, 405);
     }
 
@@ -186,16 +197,22 @@ export async function handleContributions(
         const invalidHeaders = uploadHeaders(request);
         if (invalidHeaders) return invalidHeaders;
     }
-    if (isLegacyCreate || (isCreate && request.headers.get('X-Model-Tides-Report') !== 'private-v1')) {
-        return response({ error: 'Update Model Tides before uploading a private contribution.' }, 426);
+    if (isLegacyCreate || (isCreate && request.headers.get('X-Model-Tides-Report') !==
+        (isPersonalCreate ? 'personal-v1' : 'private-v1'))) {
+        return response({ error: 'Update Model Tides before uploading a personal report.' }, 426);
     }
     const expectedVisibility = isReplace ? request.headers.get('X-Model-Tides-Expected-Visibility') : null;
     if (isReplace && expectedVisibility !== 'private' && expectedVisibility !== 'public') {
         return response({ error: 'Update Model Tides before replacing a contribution.' }, 426);
     }
+    const expectedAggregateHeader = isReplace ? request.headers.get('X-Model-Tides-Expected-Aggregate') : null;
+    if (isReplace && expectedAggregateHeader !== 'included' && expectedAggregateHeader !== 'excluded') {
+        return response({ error: 'Update Model Tides before replacing a report.' }, 426);
+    }
     const expectedPublished = expectedVisibility === 'public' ? 1 : 0;
-    const reviewed = isShare ? request.headers.get('X-Model-Tides-Reviewed-Revision') : null;
-    if (isShare && (reviewed === null || !/^(0|[1-9]\d*)$/.test(reviewed) ||
+    const expectedAggregate = expectedAggregateHeader === 'included' ? 1 : 0;
+    const reviewed = isShare || isContribute ? request.headers.get('X-Model-Tides-Reviewed-Revision') : null;
+    if ((isShare || isContribute) && (reviewed === null || !/^(0|[1-9]\d*)$/.test(reviewed) ||
         !Number.isSafeInteger(Number(reviewed)))) {
         return response({ error: 'Update Model Tides and review every weekly count before sharing.' }, 426);
     }
@@ -232,6 +249,17 @@ export async function handleContributions(
         if (result.meta.changes !== 1) return response({ error: 'Report changed. Review all counts before sharing.' }, 409);
         return response({ id, published: isShare, ...(isShare ? { url: `${new URL(request.url).origin}/u/${id}` } : {}) });
     }
+    if (isContribute || isWithdraw) {
+        const sql = isContribute
+            ? `UPDATE contributors SET in_aggregate = 1, updated_at = ?, report_revision = report_revision + 1
+                WHERE id = ? AND token_hash = ? AND report_revision = ?
+                AND (SELECT COUNT(*) FROM (SELECT 1 FROM weekly_counts WHERE contributor_id = ? LIMIT ?)) BETWEEN 1 AND ?`
+            : 'UPDATE contributors SET in_aggregate = 0, updated_at = ?, report_revision = report_revision + 1 WHERE id = ? AND token_hash = ?';
+        const result = await db.prepare(sql).bind(now, id!, hash!, ...(isContribute
+            ? [Number(reviewed), id!, MAX_REVIEW_CELLS + 1, MAX_REVIEW_CELLS] : [])).run();
+        return result.meta.changes === 1 ? response({ id, inAggregate: isContribute }) :
+            response({ error: 'Report changed. Review all counts before contributing.' }, 409);
+    }
     const snapshot = await readSnapshot(request);
     if (snapshot instanceof Response) return snapshot;
     const entries = rows(snapshot);
@@ -239,11 +267,12 @@ export async function handleContributions(
         const createdId = uuidv7();
         const secret = newToken();
         await db.batch([
-            db.prepare('INSERT INTO contributors (id, token_hash, created_at, updated_at, published) VALUES (?, ?, ?, ?, 0)')
-                .bind(createdId, await tokenHash(secret), now, now),
+            db.prepare('INSERT INTO contributors (id, token_hash, created_at, updated_at, published, in_aggregate) VALUES (?, ?, ?, ?, ?, ?)')
+                .bind(createdId, await tokenHash(secret), now, now, isPersonalCreate ? 1 : 0, isPersonalCreate ? 0 : 1),
             ...insertRows(db, createdId, entries),
         ]);
-        return response({ id: createdId, published: false, token: secret }, 201);
+        return response({ id: createdId, published: isPersonalCreate, inAggregate: !isPersonalCreate, token: secret,
+            ...(isPersonalCreate ? { url: `${new URL(request.url).origin}/u/${createdId}` } : {}) }, 201);
     }
     const weeks = snapshot.weeks.map(({ week }) => week);
     const exceedsStoredLimit = async (): Promise<boolean> => {
@@ -257,12 +286,12 @@ export async function handleContributions(
         return response({ error: 'Stored report exceeds the weekly count limit.' }, 413);
     }
     const statements = [
-        db.prepare('UPDATE contributors SET updated_at = ?, report_revision = report_revision + 1 WHERE id = ? AND token_hash = ? AND published = ?')
-            .bind(now, id!, hash!, expectedPublished),
+        db.prepare('UPDATE contributors SET updated_at = ?, report_revision = report_revision + 1 WHERE id = ? AND token_hash = ? AND published = ? AND in_aggregate = ?')
+            .bind(now, id!, hash!, expectedPublished, expectedAggregate),
         db.prepare(`DELETE FROM weekly_counts WHERE contributor_id = ? AND week IN (SELECT value FROM json_each(?))
-            AND EXISTS (SELECT 1 FROM contributors WHERE id = ? AND token_hash = ? AND published = ?)`)
-            .bind(id!, JSON.stringify(weeks), id!, hash!, expectedPublished),
-        ...insertRows(db, id!, entries, hash!, expectedPublished),
+            AND EXISTS (SELECT 1 FROM contributors WHERE id = ? AND token_hash = ? AND published = ? AND in_aggregate = ?)`)
+            .bind(id!, JSON.stringify(weeks), id!, hash!, expectedPublished, expectedAggregate),
+        ...insertRows(db, id!, entries, hash!, expectedPublished, expectedAggregate),
     ];
     const result = await db.batch(statements).catch(async (error: unknown) => {
         if (error instanceof Error && error.message.includes(storedLimitTrigger) && await exceedsStoredLimit()) return null;
@@ -270,8 +299,9 @@ export async function handleContributions(
     });
     if (!result) return response({ error: 'Stored report exceeds the weekly count limit.' }, 413);
     if (result[0].meta.changes !== 1) return response({ error: 'Report visibility changed. Review before replacing.' }, 409);
-    const current = await db.prepare('SELECT published FROM contributors WHERE id = ? AND token_hash = ?')
-        .bind(id!, hash!).first<{ published: number }>();
-    return current ? response({ id, replacedWeeks: weeks.length, published: current.published === 1 }) :
+    const current = await db.prepare('SELECT published, in_aggregate FROM contributors WHERE id = ? AND token_hash = ?')
+        .bind(id!, hash!).first<{ published: number; in_aggregate: number }>();
+    return current ? response({ id, replacedWeeks: weeks.length, published: current.published === 1,
+        inAggregate: current.in_aggregate === 1 }) :
         response({ error: 'Invalid contribution or token.' }, 401);
 }

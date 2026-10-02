@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { brotliDecompressSync } from 'node:zlib';
-import { collectSources, exportLocal, publishSnapshot, reportVisibility, setSharing, snapshotFromDocuments } from '../scripts/contribute.mjs';
+import { collectSources, exportLocal, publishSnapshot, reportVisibility, setAggregate, setSharing, snapshotFromDocuments } from '../scripts/contribute.mjs';
 import { parseUsageDocument } from '../src/usage-data.ts';
 
 const doc = {
@@ -43,16 +43,17 @@ test('CLI sends only approved weekly model counts as Brotli, with private token 
     };
     await publishSnapshot(snapshot, null, fakeFetch, 'https://example.test/api/contributions');
     await publishSnapshot(snapshot, { id: 'public-id', token: 'private-token' }, fakeFetch,
-        'https://example.test/api/contributions', false);
-    assert.equal(calls[0].url, 'https://example.test/api/contributions/private');
+        'https://example.test/api/contributions', false, false);
+    assert.equal(calls[0].url, 'https://example.test/api/contributions/personal');
     assert.equal(calls[0].method, 'POST');
     assert.equal(calls[0].headers['Content-Encoding'], 'br');
-    assert.equal(calls[0].headers['X-Model-Tides-Report'], 'private-v1');
+    assert.equal(calls[0].headers['X-Model-Tides-Report'], 'personal-v1');
     assert.equal(calls[0].headers.Authorization, undefined);
     assert.equal(calls[1].url, 'https://example.test/api/contributions/public-id');
     assert.equal(calls[1].method, 'PUT');
     assert.equal(calls[1].headers.Authorization, 'Bearer private-token');
     assert.equal(calls[1].headers['X-Model-Tides-Expected-Visibility'], 'private');
+    assert.equal(calls[1].headers['X-Model-Tides-Expected-Aggregate'], 'excluded');
     assert.equal(calls[1].headers['X-Model-Tides-Report'], undefined);
     assert.deepEqual(calls[0].body, { format: 'model-tides-weekly', version: 1, weeks: [{
         week: '2026-09-28', models: { 'anthropic/claude-sonnet': 1, 'openai/gpt-5': 1 },
@@ -73,7 +74,7 @@ test('CLI warns before replacing weeks in an already public report', () => {
         const preload = join(home, 'public-report.mjs');
         writeFileSync(preload, `globalThis.fetch = async (url, options) => {
     if (url === 'https://modeltides.dev/api/contributions/${id}' && options?.method === undefined) {
-        return Response.json({ id: '${id}', published: true, revision: 0,
+         return Response.json({ id: '${id}', published: true, inAggregate: true, revision: 0,
             counts: [{ week: '2026-09-28', model: 'openai/gpt-5', count: 1 }] });
     }
     throw new Error('No upload was authorized.');
@@ -98,7 +99,7 @@ test('CLI refuses replacement if the report visibility cannot be verified', asyn
         return Response.json({ id: owner.id, counts: [] }); // Old Worker responses omit visibility.
     };
     await assert.rejects(reportVisibility(owner, fakeFetch, 'https://example.test/api/contributions'),
-        /Could not confirm personal report visibility. No upload was started/);
+        /Could not confirm personal report visibility and aggregate participation. No upload was started/);
     assert.deepEqual(calls.map(({ url, options }) => ({ url, auth: options.headers.Authorization, method: options.method })), [
         { url: `https://example.test/api/contributions/${owner.id}`, auth: `Bearer ${owner.token}`, method: undefined },
     ]);
@@ -130,6 +131,37 @@ test('CLI sharing changes use only the owner key and never send metadata', async
         { url: `${endpoint}/${owner.id}/unshare`, method: 'POST', authorization: `Bearer ${owner.token}`, body: undefined },
     ]);
     assert.equal(calls[0].options.headers['X-Model-Tides-Reviewed-Revision'], '0');
+});
+
+test('CLI aggregate opt-in sends a reviewed revision and no metadata, while withdrawal keeps the report', async () => {
+    const owner = { id: '0199abcf-22aa-7333-8abc-0123456789ab', token: 's'.repeat(43) };
+    const reviewed = { revision: 4, snapshot: snapshotFromDocuments([doc]) };
+    const calls = [];
+    const fakeFetch = async (url, options) => {
+        calls.push({ url, ...options });
+        return Response.json({ id: owner.id, inAggregate: url.endsWith('/contribute') });
+    };
+    assert.equal((await setAggregate(owner, true, fakeFetch, 'https://example.test/api/contributions', reviewed)).inAggregate, true);
+    assert.equal((await setAggregate(owner, false, fakeFetch, 'https://example.test/api/contributions')).inAggregate, false);
+    assert.equal(calls[0].headers['X-Model-Tides-Reviewed-Revision'], '4');
+    assert.equal(calls[0].headers.Authorization, `Bearer ${owner.token}`);
+    assert.equal(calls[0].body, undefined);
+    assert.equal(calls[1].body, undefined);
+});
+
+test('help lists every CLI command and its privacy choices without scanning history or network access', () => {
+    const home = mkdtempSync(join(tmpdir(), 'model-tides-help-'));
+    try {
+        const result = spawnSync(process.execPath, ['--experimental-strip-types', 'scripts/contribute.mjs', 'help'], {
+            cwd: new URL('../', import.meta.url), encoding: 'utf8', timeout: 10_000,
+            env: { ...process.env, HOME: home, XDG_CONFIG_HOME: home, HTTPS_PROXY: 'http://127.0.0.1:1' },
+        });
+        assert.equal(result.status, 0, result.stderr);
+        for (const command of ['upload', 'contribute', 'withdraw', 'share', 'unshare', 'gist', 'link', 'export', 'help']) {
+            assert.match(result.stdout, new RegExp(`\\b${command}\\b`));
+        }
+        assert.match(result.stdout, /unlisted, not private/);
+    } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
 test('CLI shows every stored week before confirming personal report sharing', () => {
@@ -228,6 +260,34 @@ process.stdout.write('https://gist.github.com/0123456789abcdef0123456789abcdef\\
             assert.equal(content.includes(`"${privateKey}"`), false);
         }
         assert.equal(content.includes(String(doc.events[0].time)), false);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('upload offers an unlisted gist when gh is present and never uploads to Model Tides on that choice', () => {
+    const home = mkdtempSync(join(tmpdir(), 'model-tides-gist-option-'));
+    try {
+        const input = join(home, 'metadata.json');
+        const capture = join(home, 'gist-capture.json');
+        writeFileSync(input, JSON.stringify(doc));
+        writeFileSync(join(home, 'gh'), `#!/usr/bin/env node
+import { readFileSync, writeFileSync } from 'node:fs';
+if (process.argv[2] === '--version') process.exit(0);
+if (process.argv[2] === 'api') { process.stdout.write('BYK\\n'); process.exit(0); }
+writeFileSync(process.env.GIST_CAPTURE, JSON.stringify({ content: readFileSync(0, 'utf8') }));
+process.stdout.write('https://gist.github.com/0123456789abcdef0123456789abcdef\\n');
+`, { mode: 0o700 });
+        const interceptor = join(home, 'no-site.mjs');
+        writeFileSync(interceptor, 'globalThis.fetch = () => { throw new Error("No site upload authorized."); };');
+        const result = spawnSync(process.execPath, ['--experimental-strip-types', '--import', interceptor,
+            'scripts/contribute.mjs', 'upload', '--input', input], {
+            cwd: new URL('../', import.meta.url), encoding: 'utf8', input: 'GIST\n', timeout: 10_000,
+            env: { ...process.env, HOME: home, XDG_CONFIG_HOME: home, GIST_CAPTURE: capture,
+                PATH: `${home}:${process.env.PATH}`, HTTPS_PROXY: 'http://127.0.0.1:1' },
+        });
+        assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+        assert.match(result.stdout, /GitHub CLI detected/);
+        assert.match(result.stdout, /Unlisted gist:/);
+        assert.deepEqual(JSON.parse(JSON.parse(readFileSync(capture, 'utf8')).content), snapshotFromDocuments([doc]));
     } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
