@@ -63,7 +63,14 @@ export default {
                         ? summarize(null, (await getAggregate(env.DB)).weeks)
                         : await getReport(env.DB, id!);
                     if (!report) return new Response('Not found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
-                    if (publicPath.test(url.pathname)) return pageForReport(report, url.origin);
+                    if (publicPath.test(url.pathname)) {
+                        if (request.method === 'HEAD') return new Response(null, {
+                            headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+                        });
+                        const asset = await env.ASSETS.fetch(new Request(new URL('/', url)));
+                        if (!asset.ok) return new Response('Service unavailable', { status: 503 });
+                        return pageForReport(report, url.origin, await asset.text());
+                    }
                     if (request.method === 'HEAD') return new Response(null, { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' } });
                     const { renderImage } = await import('./og.ts');
                     return await renderImage(report);

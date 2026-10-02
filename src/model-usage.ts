@@ -102,8 +102,8 @@ root.innerHTML = `
                     <button class="text-button" id="show-models" type="button" hidden></button>
                     <button class="text-button" id="share-image" type="button" hidden>Download share image</button>
                     <button class="text-button" id="export-metadata" type="button" hidden>Export metadata JSON</button>
-                    <button class="text-button" id="contribute" type="button" hidden>Upload weekly counts</button>
-                    <button class="text-button" id="manage-contribution" type="button">Manage contribution</button>
+                    <button class="text-button" id="contribute" type="button" hidden>Publish personal chart</button>
+                    <button class="text-button" id="manage-contribution" type="button">Manage personal chart</button>
                     <button class="text-button" id="clear-history" type="button" hidden>Clear history</button>
                 </div>
             </div>
@@ -147,8 +147,8 @@ root.innerHTML = `
         </section>
 
         <dialog id="contribution-dialog" class="contribution-dialog" aria-labelledby="contribution-heading">
-            <h2 id="contribution-heading">Upload weekly counts</h2>
-            <p>Review every week, model name, and count below before uploading. New personal reports start private. Replacing weeks in an already shared report makes the reviewed counts public immediately. Your original history, exact event times, prompts, replies, and session IDs stay here.</p>
+            <h2 id="contribution-heading">Publish a personal chart</h2>
+            <p>Review every week, model name, and count below before uploading. A new chart is viewable by anyone with its link, but its counts do not enter the community aggregate unless you opt in separately. Replacing weeks in an already shared report makes the reviewed counts public immediately. Your original history, exact event times, prompts, replies, and session IDs stay here.</p>
             <pre id="contribution-preview" class="contribution-preview"></pre>
             <p id="contribution-status" role="status" aria-live="polite"></p>
             <label class="key-import">Already uploaded counts? Load your private key to manage or replace them <input id="owner-key-file" type="file" accept=".json,application/json" /></label>
@@ -160,18 +160,20 @@ root.innerHTML = `
                 <pre id="stored-counts" class="contribution-preview" hidden></pre>
                 <button id="share-contribution" type="button" class="text-button">Share personal report</button>
                 <button id="unshare-contribution" type="button" class="text-button" hidden>Hide personal report</button>
+                <button id="aggregate-contribution" type="button" class="text-button" hidden>Add counts to community aggregate</button>
+                <button id="withdraw-contribution" type="button" class="text-button" hidden>Remove counts from community aggregate</button>
                 <button id="rotate-owner-key" type="button" class="text-button">Rotate private key</button>
                 <button id="delete-contribution" type="button" class="text-button">Delete contribution</button>
             </div>
             <div class="contribution-actions">
-                <button id="confirm-contribution" type="button" class="import-button">Upload these weekly counts</button>
+                <button id="confirm-contribution" type="button" class="import-button">Publish this personal chart</button>
                 <button id="close-contribution" type="button" class="text-button">Close</button>
             </div>
         </dialog>
 
         <footer class="footnote">
             <span class="footnote-mark">i</span>
-            <p id="footnote-copy">New sessions and model changes count as one observed usage event; repeated turns on the same model add nothing. Bright ribbons show recorded events, including within-period model switches. Faint streams connect recurring models and resize between each period’s activity; they show visual continuity, not persistent sessions. OpenCode database queries read model and timestamp metadata, plus session IDs to count starts; IDs never leave the browser. Local history converters use IDs only to avoid double-counting; IDs never enter JSON. Prompts and responses are never extracted. Import stays in this tab. If you choose to contribute, only the reviewed weekly model names and counts are uploaded.</p>
+            <p id="footnote-copy">New sessions and model changes count as one observed usage event; repeated turns on the same model add nothing. Bright ribbons show recorded events, including within-period model switches. Faint streams connect recurring models and resize between each period’s activity; they show visual continuity, not persistent sessions. OpenCode database queries read model and timestamp metadata, plus session IDs to count starts; IDs never leave the browser. Local history converters use IDs only to avoid double-counting; IDs never enter JSON. Prompts and responses are never extracted. Import stays in this tab. Sharing a personal chart and joining the community aggregate are separate choices; both send only reviewed weekly model names and counts.</p>
             <span class="source-label"><span class="status-dot"></span> ON-DEVICE ANALYSIS</span>
             <a class="repo-link" href="https://github.com/BYK/model-tides" target="_blank" rel="noopener noreferrer">Source on GitHub ↗</a>
         </footer>

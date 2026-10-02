@@ -6,7 +6,6 @@ import { setupTheme } from './theme';
 const root = document.querySelector<HTMLElement>('#app');
 if (!root) throw new Error('The Model Tides home page needs a root element.');
 
-const command = 'npx model-tides@latest upload';
 root.innerHTML = `
     <main class="usage-app home-app">
         <header class="masthead">
@@ -20,15 +19,8 @@ root.innerHTML = `
         <div class="home-intro"><h1>Your models, over time<span class="title-wave" aria-hidden="true"> ~</span></h1></div>
 
         <section class="home-cta" aria-labelledby="home-cta-heading">
-            <h2 id="home-cta-heading">See (and optionally share) your own data</h2>
-            <div class="command-strip" role="group" aria-label="Run Model Tides in your terminal">
-                <span class="command-kind">npx</span>
-                <code id="upload-command"><span class="command-prompt">npx</span> <span class="command-package">model-tides@latest</span> <span class="command-verb">upload</span></code>
-                <button id="copy-command" class="copy-command" type="button" aria-label="Copy upload command" title="Copy command">
-                    <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
-                </button>
-            </div>
-            <span id="copy-status" class="visually-hidden" role="status" aria-live="polite"></span>
+            <h2 id="home-cta-heading">See and share your own model history</h2>
+            <a class="command-strip" href="/local/">Explore and publish a personal chart in your browser →</a>
         </section>
 
         <section class="global-card home-graph" aria-labelledby="global-heading">
@@ -38,25 +30,12 @@ root.innerHTML = `
             <p class="global-note">Self-reported counts · each model and week needs five contributors to appear.</p>
         </section>
 
-        <footer class="home-footer">Or <a href="/local/">explore and upload in your browser →</a> · <a href="https://github.com/BYK/model-tides" target="_blank" rel="noopener noreferrer">see the code ↗</a></footer>
+        <footer class="home-footer"><a href="https://github.com/BYK/model-tides" target="_blank" rel="noopener noreferrer">see the code ↗</a></footer>
     </main>
 `;
 
 const chart = root.querySelector<HTMLElement>('#global-chart')!;
 const status = root.querySelector<HTMLElement>('#global-status')!;
 void loadGlobalView(chart, status, null, true);
-
-const copyStatus = root.querySelector<HTMLElement>('#copy-status')!;
-const copyButton = root.querySelector<HTMLButtonElement>('#copy-command')!;
-copyButton.addEventListener('click', async () => {
-    try {
-        await navigator.clipboard.writeText(command);
-        copyStatus.textContent = 'Command copied.';
-        copyButton.setAttribute('aria-label', 'Command copied');
-        copyButton.title = 'Copied';
-    } catch {
-        copyStatus.textContent = 'Copy failed. Select the command to copy it.';
-    }
-});
 
 setupTheme(root);

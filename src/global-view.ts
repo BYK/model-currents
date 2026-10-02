@@ -23,13 +23,14 @@ const exampleRows: AggregateRow[] = [
 
 export function renderWeeklyRows(
     chart: HTMLElement, rows: readonly Pick<AggregateRow, 'week' | 'model' | 'count'>[], source: 'mock' | 'shared' | 'gist',
+    showAll = false,
 ): void {
     const example = source === 'mock';
     const label = example ? 'mock' : source === 'gist' ? 'gist' : 'shared';
     const totals = new Map<string, number>();
     for (const { model, count } of rows) totals.set(model, (totals.get(model) ?? 0) + count);
     const ordered = [...totals].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-    const visible = new Set(ordered.slice(0, 6).map(([model]) => model));
+    const visible = new Set(ordered.slice(0, showAll ? undefined : 6).map(([model]) => model));
     const times = rows.map(({ week }) => Date.parse(`${week}T00:00:00Z`));
     const first = Math.min(...times);
     const last = Math.max(...times) + 6 * 86_400_000;
@@ -37,7 +38,7 @@ export function renderWeeklyRows(
         time: Date.parse(`${week}T00:00:00Z`), to: model, weight: count,
     })), {
         start: first, end: last, width: 1100, height: 400,
-        order: [...visible, 'Other models'],
+        order: [...visible, ...(showAll ? [] : ['Other models'])],
         displayKey: (model) => visible.has(model) ? model : 'Other models',
         colorFor: getModelColor,
         streamColorFor: (model) => getModelColor(model),

@@ -50,17 +50,18 @@ test('npm package includes the local converters, metadata validator, and command
         const id = '0199abcf-22aa-7333-8abc-0123456789ab';
         const token = 's'.repeat(43);
         writeFileSync(interceptor, `globalThis.fetch = async (url, options) => {
-            if (url !== 'https://modeltides.dev/api/contributions/private' || options?.method !== 'POST') {
+            if (url !== 'https://modeltides.dev/api/contributions/personal' || options?.method !== 'POST') {
                 throw new Error('Unexpected network request: ' + String(url) + ' ' + String(options?.method));
             }
-            return Response.json({ id: '${id}', token: '${token}', published: false }, { status: 201 });
+            return Response.json({ id: '${id}', token: '${token}', published: true, inAggregate: false,
+                url: 'https://modeltides.dev/u/${id}' }, { status: 201 });
         };`);
         const environment = { ...process.env, HOME: directory, XDG_CONFIG_HOME: join(directory, 'config') };
         const uploaded = execFileSync('node', ['--import', interceptor, bin, 'upload', '--input', file], {
             cwd: directory, encoding: 'utf8', input: 'YES\n', env: environment,
         });
-        assert.match(uploaded, /personal report is private/);
-        assert.doesNotMatch(uploaded, /Public link:/);
+        assert.match(uploaded, new RegExp(`Personal chart: https://modeltides\\.dev/u/${id}`));
+        assert.match(uploaded, /not added to the community aggregate/);
         assert.doesNotMatch(uploaded, new RegExp(token));
         const savedKey = join(directory, 'config/model-tides/contribution.json');
         assert.equal(statSync(savedKey).mode & 0o777, 0o600);
@@ -71,7 +72,7 @@ test('npm package includes the local converters, metadata validator, and command
 
         writeFileSync(interceptor, `globalThis.fetch = async (url, options) => {
             if (url === 'https://modeltides.dev/api/contributions/${id}' && options?.method === undefined) {
-                return Response.json({ id: '${id}', published: false, revision: 0,
+                return Response.json({ id: '${id}', published: false, inAggregate: false, revision: 0,
                     counts: [{ week: '2026-09-28', model: 'openai/gpt-5', count: 1 }] });
             }
             if (options?.method !== 'POST' || options?.headers?.Authorization !== 'Bearer ${token}') {
