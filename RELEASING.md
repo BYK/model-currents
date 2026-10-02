@@ -4,7 +4,7 @@ Craft publishes only the package in `cli/`. The repository root remains private.
 
 ## One-time setup
 
-1. Install a GitHub App on `BYK/model-tides` with **Contents: read and write** and **Issues: read and write**. Add its ID as the repository variable `APP_ID` and its private key as the repository secret `APP_PRIVATE_KEY`. Craft needs the App token to create a release branch that triggers CI and to finish the release.
+1. Install a GitHub App on `BYK/model-tides` with **Contents: read and write** and **Issues: read and write**. Add its ID as the `production` environment variable `APP_ID` and its private key as the `production` environment secret `APP_PRIVATE_KEY`. Craft needs the App token to create a release branch that triggers CI and to finish the release. The environment accepts protected branches only; the `Safety` ruleset protects `main` and requires the `build` check before merging.
 2. On [npm's `model-tides` package settings](https://www.npmjs.com/package/model-tides/access), add a **GitHub Actions trusted publisher**: owner `BYK`, repository `model-tides`, workflow filename `publish.yml`, environment `production`, and **Allow npm publish**. The workflow uses a GitHub-hosted runner with OIDC; no npm publish token is needed. After an OIDC release succeeds, disallow traditional publish tokens in the npm package settings.
 
 ## Release
