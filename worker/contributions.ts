@@ -175,28 +175,41 @@ export async function handleContributions(
         return response({ ...await getAggregate(db), note: 'Self-reported; cells with fewer than five contributors are hidden.' });
     }
 
-    const match = /^\/api\/contributions\/([^/]+)(\/rotate)?$/.exec(path);
+    const match = /^\/api\/contributions\/([^/]+)(\/(?:rotate|share|unshare))?$/.exec(path);
     if (path !== '/api/contributions' && !match) return response({ error: 'Not found.' }, 404);
     const id = match?.[1];
     if (id && !contributionId.test(id)) return response({ error: 'Not found.' }, 404);
     if (match && !match[2] && request.method === 'GET') {
-        const { results } = await db.prepare(`SELECT week, model, count FROM weekly_counts
-            WHERE contributor_id = ? ORDER BY week, model`).bind(id!).all<{ week: string; model: string; count: number }>();
-        const exists = await db.prepare('SELECT id FROM contributors WHERE id = ?').bind(id!).first<{ id: string }>();
-        return exists ? response({ id, counts: results }) : response({ error: 'Not found.' }, 404);
+        const authorization = request.headers.get('Authorization');
+        const token = bearer(request);
+        if (authorization !== null && !token) return response({ error: 'Private token required.' }, 401);
+        const access = token ? 'c.token_hash = ?' : 'c.published = 1';
+        const { results } = await db.prepare(`SELECT w.week, w.model, w.count, c.published
+            FROM contributors c JOIN weekly_counts w ON w.contributor_id = c.id
+            WHERE c.id = ? AND ${access} ORDER BY w.week, w.model`)
+            .bind(id!, ...(token ? [await tokenHash(token)] : [])).all<{ week: string; model: string; count: number; published: number }>();
+        if (!results.length) return response({ error: 'Not found.' }, 404);
+        return response({ id, counts: results.map(({ week, model, count }) => ({ week, model, count })), published: results[0].published === 1 });
     }
 
     const isCreate = path === '/api/contributions' && request.method === 'POST';
     const isReplace = !!id && !match?.[2] && request.method === 'PUT';
     const isDelete = !!id && !match?.[2] && request.method === 'DELETE';
-    const isRotate = !!id && !!match?.[2] && request.method === 'POST';
-    if (!isCreate && !isReplace && !isDelete && !isRotate) return response({ error: 'Method not allowed.' }, 405);
+    const isRotate = !!id && match?.[2] === '/rotate' && request.method === 'POST';
+    const isShare = !!id && match?.[2] === '/share' && request.method === 'POST';
+    const isUnshare = !!id && match?.[2] === '/unshare' && request.method === 'POST';
+    if (!isCreate && !isReplace && !isDelete && !isRotate && !isShare && !isUnshare) {
+        return response({ error: 'Method not allowed.' }, 405);
+    }
 
     const token = isCreate ? null : bearer(request);
     if (!isCreate && !token) return response({ error: 'Private token required.' }, 401);
     if (isCreate || isReplace) {
         const invalidHeaders = uploadHeaders(request);
         if (invalidHeaders) return invalidHeaders;
+    }
+    if (isCreate && request.headers.get('X-Model-Tides-Report') !== 'private-v1') {
+        return response({ error: 'Update Model Tides before uploading a private contribution.' }, 426);
     }
     const rate = await limit.limit({ key: `write:${request.headers.get('CF-Connecting-IP') ?? 'unattributed'}` });
     if (!rate.success) return response({ error: 'Too many uploads. Try again later.' }, 429);
@@ -219,6 +232,13 @@ export async function handleContributions(
             .bind(await tokenHash(replacement), now, id!, hash!).run();
         return result.meta.changes === 1 ? response({ id, token: replacement }) : response({ error: 'Invalid contribution or token.' }, 401);
     }
+    if (isShare || isUnshare) {
+        const published = isShare ? 1 : 0;
+        const result = await db.prepare('UPDATE contributors SET published = ?, updated_at = ? WHERE id = ? AND token_hash = ?')
+            .bind(published, now, id!, hash!).run();
+        if (result.meta.changes !== 1) return response({ error: 'Invalid contribution or token.' }, 401);
+        return response({ id, published: isShare, ...(isShare ? { url: `${new URL(request.url).origin}/u/${id}` } : {}) });
+    }
     const snapshot = await readSnapshot(request);
     if (snapshot instanceof Response) return snapshot;
     const entries = rows(snapshot);
@@ -226,11 +246,11 @@ export async function handleContributions(
         const createdId = uuidv7();
         const secret = newToken();
         await db.batch([
-            db.prepare('INSERT INTO contributors (id, token_hash, created_at, updated_at) VALUES (?, ?, ?, ?)')
+            db.prepare('INSERT INTO contributors (id, token_hash, created_at, updated_at, published) VALUES (?, ?, ?, ?, 0)')
                 .bind(createdId, await tokenHash(secret), now, now),
             ...insertRows(db, createdId, entries),
         ]);
-        return response({ id: createdId, url: `${new URL(request.url).origin}/u/${createdId}`, token: secret }, 201);
+        return response({ id: createdId, published: false, token: secret }, 201);
     }
     const weeks = snapshot.weeks.map(({ week }) => week);
     const result = await db.batch([
@@ -240,5 +260,9 @@ export async function handleContributions(
             .bind(id!, ...weeks, id!, hash!),
         ...insertRows(db, id!, entries, hash!),
     ]);
-    return result[0].meta.changes === 1 ? response({ id, replacedWeeks: weeks.length }) : response({ error: 'Invalid contribution or token.' }, 401);
+    if (result[0].meta.changes !== 1) return response({ error: 'Invalid contribution or token.' }, 401);
+    const current = await db.prepare('SELECT published FROM contributors WHERE id = ? AND token_hash = ?')
+        .bind(id!, hash!).first<{ published: number }>();
+    return current ? response({ id, replacedWeeks: weeks.length, published: current.published === 1 }) :
+        response({ error: 'Invalid contribution or token.' }, 401);
 }

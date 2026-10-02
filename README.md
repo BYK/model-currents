@@ -16,7 +16,9 @@ The page follows your system's light or dark appearance. Use the theme button to
 
 ## Share a weekly snapshot (optional)
 
-Run `npx model-tides@latest upload` to discover local OpenCode, Codex, and Claude Code history. The CLI shows the exact weekly model counts and asks you to type `YES` before sharing anything. Alternatively, click **Contribute weekly counts** after importing real history into the [private timeline](https://modeltides.dev/local/). Both routes share every reviewed model name, including older versions and provider-specific aliases; no current model catalog can verify self-reported use. Only the reviewed week/model/count pairs leave your device, Brotli-compressed; no transcripts, exact event times, paths, session IDs, or imported files are sent. The Worker validates the snapshot before storing it. The response contains a public UUIDv7 link and a separate private key. The CLI saves the key locally and prints the public URL; run `npx model-tides@latest link` to see it again. In the browser, download the key immediately and keep it private. Loading it back into the site lets you replace the same weeks, rotate the key, or delete the link. The site never stores the key in browser storage.
+Run `npx model-tides@latest upload` to discover local OpenCode, Codex, and Claude Code history. The CLI shows the exact weekly model counts and asks you to type `YES` before uploading. Alternatively, click **Upload weekly counts** after importing real history into the [private timeline](https://modeltides.dev/local/). Both routes upload every reviewed model name, including older versions and provider-specific aliases; no current model catalog can verify self-reported use. Only the reviewed week/model/count pairs leave your device, Brotli-compressed; no transcripts, exact event times, paths, session IDs, or imported files are sent. The counts contribute to the community aggregate, while your personal report stays private. The Worker validates the snapshot before storing it and returns a UUIDv7 ID and a separate private key. The CLI saves the key locally; in the browser, download it before closing the tab. Loading it back into the site lets you replace weeks or manage your contribution. The site never stores the key in browser storage.
+
+Run `npx model-tides@latest share` or use **Share personal report** in the browser to publish your weekly counts at `/u/<id>`; this is a separate choice after uploading. Run `unshare` or **Hide personal report** to remove the page and its image without removing your counts from the aggregate. Use **Manage contribution** at `/local/` to load your key even after clearing your history. `link` prints the report address offline, but the address works only while shared. Links created before this change remain public until their owners hide them. As another way to share only reviewed weekly counts, run `npx model-tides@latest gist` (or `gist --input model-tides.json`) with an authenticated GitHub CLI. It shows the counts and asks for `YES` before creating an **unlisted** gist. Anyone with its URL can read it, and GitHub keeps its revisions; it never contains exact event times.
 
 The same local uploader also runs from a repository checkout:
 
@@ -27,6 +29,11 @@ npm run contribute
 npm run contribute -- --input model-tides.json
 # Show the public URL again without scanning history:
 npm run contribute -- link
+# Publish or hide your personal report without changing the aggregate:
+npm run contribute -- share
+npm run contribute -- unshare
+# Or create an unlisted GitHub gist of reviewed weekly counts:
+npm run contribute -- gist --input model-tides.json
 # Rotate the saved private key or delete the contribution:
 npm run contribute -- --rotate
 npm run contribute -- --delete
@@ -34,7 +41,7 @@ npm run contribute -- --delete
 
 The npm package contains only the uploader, local Python converters, and metadata validator. It has no runtime npm dependencies. [Craft releases](RELEASING.md) publish the CLI through npm trusted publishing.
 
-The CLI stores the private replacement key in `~/.config/model-tides/contribution.json` (or under `XDG_CONFIG_HOME`) with owner-only permissions. A second upload replaces matching contributor-weeks instead of incrementing them. Public links show weekly names and counts immediately, with live Open Graph PNG previews. The home page shows a global timeline; each model-week needs at least five contributors to appear. Until then, it shows labeled mock data. Contributions are self-reported, and separate identities can upload overlapping histories. The offline local view remains available without contributing. Mock data cannot be contributed.
+The CLI stores the private replacement key in `~/.config/model-tides/contribution.json` (or under `XDG_CONFIG_HOME`) with owner-only permissions. A second upload replaces matching contributor-weeks instead of incrementing them. Shared personal links show weekly names and counts immediately, with live Open Graph PNG previews. The home page shows a global timeline; each model-week needs at least five contributors to appear. Until then, it shows labeled mock data. Contributions are self-reported, and separate identities can upload overlapping histories. The offline local view remains available without contributing. Mock data cannot be contributed.
 
 ### Codex and Claude Code
 

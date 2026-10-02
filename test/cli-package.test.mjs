@@ -53,19 +53,42 @@ test('npm package includes the local converters, metadata validator, and command
             if (url !== 'https://modeltides.dev/api/contributions' || options?.method !== 'POST') {
                 throw new Error('Unexpected network request: ' + String(url) + ' ' + String(options?.method));
             }
-            return Response.json({ id: '${id}', token: '${token}' }, { status: 201 });
+            return Response.json({ id: '${id}', token: '${token}', published: false }, { status: 201 });
         };`);
         const environment = { ...process.env, HOME: directory, XDG_CONFIG_HOME: join(directory, 'config') };
         const uploaded = execFileSync('node', ['--import', interceptor, bin, 'upload', '--input', file], {
             cwd: directory, encoding: 'utf8', input: 'YES\n', env: environment,
         });
-        assert.match(uploaded, new RegExp(`Public link: https://modeltides\\.dev/u/${id}`));
+        assert.match(uploaded, /personal report is private/);
+        assert.doesNotMatch(uploaded, /Public link:/);
         assert.doesNotMatch(uploaded, new RegExp(token));
         const savedKey = join(directory, 'config/model-tides/contribution.json');
         assert.equal(statSync(savedKey).mode & 0o777, 0o600);
         const repeatedLink = execFileSync('node', [bin, 'link'], { cwd: directory, encoding: 'utf8', env: environment });
-        assert.equal(repeatedLink, `Public link: https://modeltides.dev/u/${id}\n`);
+        assert.match(repeatedLink, new RegExp(`^Public link: https://modeltides\\.dev/u/${id}\\n`));
+        assert.match(repeatedLink, /link works only while your personal report is shared/);
         assert.doesNotMatch(repeatedLink, new RegExp(token));
+
+        writeFileSync(interceptor, `globalThis.fetch = async (url, options) => {
+            if (options?.method !== 'POST' || options?.headers?.Authorization !== 'Bearer ${token}') {
+                throw new Error('Share requires the existing owner key.');
+            }
+            if (url === 'https://modeltides.dev/api/contributions/${id}/share') {
+                return Response.json({ id: '${id}', published: true, url: 'https://modeltides.dev/u/${id}' });
+            }
+            if (url === 'https://modeltides.dev/api/contributions/${id}/unshare') {
+                return Response.json({ id: '${id}', published: false });
+            }
+            throw new Error('Unexpected sharing request.');
+        };`);
+        const shared = execFileSync('node', ['--import', interceptor, bin, 'share'], {
+            cwd: directory, encoding: 'utf8', input: 'YES\n', env: environment,
+        });
+        assert.match(shared, new RegExp(`Public link: https://modeltides\\.dev/u/${id}`));
+        const hidden = execFileSync('node', ['--import', interceptor, bin, 'unshare'], {
+            cwd: directory, encoding: 'utf8', input: 'YES\n', env: environment,
+        });
+        assert.match(hidden, /personal report is hidden/);
 
         const history = join(directory, '.codex/sessions/2025/01/01');
         mkdirSync(history, { recursive: true });
