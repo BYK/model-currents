@@ -9,7 +9,7 @@ Craft publishes only the package in `cli/`. The repository root remains private.
 
 ## Release
 
-1. Run the GitHub **Release** workflow with `auto` once version categories are configured, or select an explicit version. Craft bumps only `cli/package.json` and opens a release request.
+1. Run the GitHub **Release** workflow with `auto`. The categories in `.github/release.yml` assign major bumps to breaking changes, minor bumps to features, and patch bumps to fixes and other changes. Craft bumps only `cli/package.json` and opens a release request.
 2. Wait for **CI / Build** on Craft's release branch. It runs the tests and build, then uploads the CLI-only `npm-tarball` artifact.
 3. Review the release request and label it `accepted`. The **Publish** workflow checks out the corresponding release branch and runs pinned Craft with npm OIDC. Craft publishes the tarball and creates the GitHub Release.
 4. Check the new version on npm and its provenance, then verify `npx model-tides@<version> export --output model-tides.json` with synthetic local history. The export command never uploads anything. Only `upload` can send counts, after an explicit `YES`.
