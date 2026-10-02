@@ -1,6 +1,6 @@
 {
   "name": "model-tides",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Opt-in local model usage snapshots for Model Tides",
   "type": "module",
   "license": "MIT",
