@@ -43,7 +43,7 @@ export default {
 
         if (reservedPaths.some((path) => url.pathname === path || url.pathname.startsWith(`${path}/`))) {
             if (url.pathname.startsWith('/api/') &&
-                (url.pathname === '/api/aggregate' || url.pathname === '/api/models' || url.pathname === '/api/contributions' ||
+                (url.pathname === '/api/aggregate' || url.pathname === '/api/contributions' ||
                     url.pathname.startsWith('/api/contributions/'))) {
                 if (!env.DB || !env.UPLOAD_LIMIT) {
                     return new Response('Service unavailable', { status: 503, headers: { 'Cache-Control': 'no-store' } });

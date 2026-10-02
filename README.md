@@ -16,7 +16,7 @@ The page follows your system's light or dark appearance. Use the theme button to
 
 ## Share a weekly snapshot (optional)
 
-Run `npx model-tides@latest upload` to discover local OpenCode, Codex, and Claude Code history. The CLI shows the exact weekly model counts and asks you to type `YES` before sharing anything. Alternatively, click **Contribute weekly counts** after importing real history into the [private timeline](https://modeltides.dev/local/). Both routes check model names against [models.dev](https://models.dev/) without sending it your model names or history. Names missing from its current catalog stay local and are shown as excluded before you confirm. Only the reviewed week/model/count pairs leave your device, Brotli-compressed; no transcripts, exact event times, paths, session IDs, or imported files are sent. The Worker checks the names again before storing them. The response contains a public UUIDv7 link and a separate private key. Download the key immediately and keep it private. Loading it back into the site lets you replace the same weeks, rotate the key, or delete the link. The site never stores the key in browser storage.
+Run `npx model-tides@latest upload` to discover local OpenCode, Codex, and Claude Code history. The CLI shows the exact weekly model counts and asks you to type `YES` before sharing anything. Alternatively, click **Contribute weekly counts** after importing real history into the [private timeline](https://modeltides.dev/local/). Both routes share every reviewed model name, including older versions and provider-specific aliases; no current model catalog can verify self-reported use. Only the reviewed week/model/count pairs leave your device, Brotli-compressed; no transcripts, exact event times, paths, session IDs, or imported files are sent. The Worker validates the snapshot before storing it. The response contains a public UUIDv7 link and a separate private key. The CLI saves the key locally and prints the public URL; run `npx model-tides@latest link` to see it again. In the browser, download the key immediately and keep it private. Loading it back into the site lets you replace the same weeks, rotate the key, or delete the link. The site never stores the key in browser storage.
 
 The same local uploader also runs from a repository checkout:
 
@@ -25,14 +25,16 @@ npm ci
 npm run contribute
 # Or use a metadata JSON you exported earlier:
 npm run contribute -- --input model-tides.json
+# Show the public URL again without scanning history:
+npm run contribute -- link
 # Rotate the saved private key or delete the contribution:
 npm run contribute -- --rotate
 npm run contribute -- --delete
 ```
 
-The npm package contains only the uploader, local Python converters, and metadata validator. It has no runtime npm dependencies. CLI release tags use `.github/workflows/publish-cli.yml` with npm trusted publishing once the trusted-publisher connection is configured.
+The npm package contains only the uploader, local Python converters, and metadata validator. It has no runtime npm dependencies. [Craft releases](RELEASING.md) publish the CLI through npm trusted publishing.
 
-The CLI stores the private replacement key in `~/.config/model-tides/contribution.json` (or under `XDG_CONFIG_HOME`) with owner-only permissions. A second upload replaces matching contributor-weeks instead of incrementing them. Public links show weekly names and counts, and have live Open Graph PNG previews. The home page shows a global timeline; each model-week needs at least five contributors to appear. Contributions are self-reported, and separate identities can upload overlapping histories. The offline local view remains available without contributing. Mock data cannot be contributed.
+The CLI stores the private replacement key in `~/.config/model-tides/contribution.json` (or under `XDG_CONFIG_HOME`) with owner-only permissions. A second upload replaces matching contributor-weeks instead of incrementing them. Public links show weekly names and counts immediately, with live Open Graph PNG previews. The home page shows a global timeline; each model-week needs at least five contributors to appear. Until then, it shows labeled mock data. Contributions are self-reported, and separate identities can upload overlapping histories. The offline local view remains available without contributing. Mock data cannot be contributed.
 
 ### Codex and Claude Code
 
@@ -60,6 +62,6 @@ npm run build
 
 The build emits `dist/`, including a service worker and bundled SQLite reader. A Cloudflare Worker serves static assets, validates opt-in weekly uploads, stores public counts in D1, renders public pages and Open Graph images, and serves aggregate counts. It never receives a database or imported metadata JSON. GitHub Actions tests pushes and pull requests.
 
-GitHub Actions tests each push and pull request; pushes to `main` apply D1 migrations before deploying. Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_D1_DATABASE_ID` as repository variables, and `CLOUDFLARE_API_TOKEN` (Workers editing) and `CLOUDFLARE_D1_TOKEN` (D1 editing) as separate repository secrets. With an authenticated Cloudflare CLI, apply `migrations/` before running `npm run deploy` manually. `cloudflare.config.ts` configures the production and staging D1 databases, rate limiting, and the apex and `www` domains; the Worker redirects HTTP and `www` to the HTTPS apex. The timeline renderer is a dependency-free SVG module under `src/flow-svg/`.
+GitHub Actions tests each push and pull request; passing pushes to protected `main` apply D1 migrations before deploying through the `production` environment. Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_D1_DATABASE_ID` as environment variables, and `CLOUDFLARE_API_TOKEN` (Workers editing) and `CLOUDFLARE_D1_TOKEN` (D1 editing) as separate environment secrets. With an authenticated Cloudflare CLI, apply `migrations/` before running `npm run deploy` manually. `cloudflare.config.ts` configures the production and staging D1 databases, rate limiting, and the apex and `www` domains; the Worker redirects HTTP and `www` to the HTTPS apex. The timeline renderer is a dependency-free SVG module under `src/flow-svg/`.
 
 Model Tides grew out of the [AG Studio × Information is Beautiful workshop starter](https://github.com/ag-grid/ag-studio-iib-workshop), but this repository contains the standalone visualization, with no AG Studio or AG Charts dependency.

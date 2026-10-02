@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,12 +38,7 @@ test('npm package includes the local converters, metadata validator, and command
             events: [{ time: Date.UTC(2026, 8, 28), kind: 'session', model: 'openai/gpt-5' }],
         }));
         const interceptor = join(directory, 'registry.mjs');
-        writeFileSync(interceptor, `globalThis.fetch = async (url, options) => {
-            if (url !== 'https://modeltides.dev/api/models' || options?.body || options?.method) {
-                throw new Error('Unexpected request during offline CLI packaging test.');
-            }
-            return Response.json({ models: ['openai/gpt-5'] });
-        };`);
+        writeFileSync(interceptor, 'globalThis.fetch = () => { throw new Error("Unexpected network request before consent."); };');
         const review = execFileSync('node', ['--import', interceptor, bin, 'upload', '--input', file], {
             cwd: directory, encoding: 'utf8', input: 'NO\n',
             env: { ...process.env, HOME: directory, XDG_CONFIG_HOME: directory },
@@ -51,6 +46,26 @@ test('npm package includes the local converters, metadata validator, and command
         assert.match(review, /Week of 2026-09-28\s+openai\/gpt-5: 1/);
         assert.match(review, /Type YES to confirm/);
         assert.doesNotMatch(review, /Public link:/);
+
+        const id = '0199abcf-22aa-7333-8abc-0123456789ab';
+        const token = 's'.repeat(43);
+        writeFileSync(interceptor, `globalThis.fetch = async (url, options) => {
+            if (url !== 'https://modeltides.dev/api/contributions' || options?.method !== 'POST') {
+                throw new Error('Unexpected network request: ' + String(url) + ' ' + String(options?.method));
+            }
+            return Response.json({ id: '${id}', token: '${token}' }, { status: 201 });
+        };`);
+        const environment = { ...process.env, HOME: directory, XDG_CONFIG_HOME: join(directory, 'config') };
+        const uploaded = execFileSync('node', ['--import', interceptor, bin, 'upload', '--input', file], {
+            cwd: directory, encoding: 'utf8', input: 'YES\n', env: environment,
+        });
+        assert.match(uploaded, new RegExp(`Public link: https://modeltides\\.dev/u/${id}`));
+        assert.doesNotMatch(uploaded, new RegExp(token));
+        const savedKey = join(directory, 'config/model-tides/contribution.json');
+        assert.equal(statSync(savedKey).mode & 0o777, 0o600);
+        const repeatedLink = execFileSync('node', [bin, 'link'], { cwd: directory, encoding: 'utf8', env: environment });
+        assert.equal(repeatedLink, `Public link: https://modeltides.dev/u/${id}\n`);
+        assert.doesNotMatch(repeatedLink, new RegExp(token));
 
         const history = join(directory, '.codex/sessions/2025/01/01');
         mkdirSync(history, { recursive: true });

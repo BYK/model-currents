@@ -93,6 +93,23 @@ test('malformed local owner key never prints credential text', () => {
     } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
+test('link prints only the existing public URL without scanning history or making a request', () => {
+    const home = mkdtempSync(join(tmpdir(), 'model-tides-link-'));
+    try {
+        mkdirSync(join(home, 'model-tides'));
+        const id = '0199abcf-22aa-7333-8abc-0123456789ab';
+        const token = 's'.repeat(43);
+        writeFileSync(join(home, 'model-tides/contribution.json'), JSON.stringify({ id, token }), { mode: 0o600 });
+        const result = spawnSync(process.execPath, ['--experimental-strip-types', 'scripts/contribute.mjs', 'link'], {
+            cwd: new URL('../', import.meta.url), encoding: 'utf8', timeout: 10_000,
+            env: { ...process.env, HOME: home, XDG_CONFIG_HOME: home, HTTPS_PROXY: 'http://127.0.0.1:1', HTTP_PROXY: 'http://127.0.0.1:1' },
+        });
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, new RegExp(`^Public link: https://modeltides\\.dev/u/${id}\\n$`));
+        assert.doesNotMatch(result.stdout + result.stderr, new RegExp(token));
+    } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
 test('CLI export combines local metadata for browser import without contacting the site or overwriting a file', () => {
     const home = mkdtempSync(join(tmpdir(), 'model-tides-export-'));
     try {
