@@ -38,7 +38,7 @@ export function setupContributions(
         if (!state.key) return;
         result.hidden = false;
         publicRow.hidden = state.published !== true;
-        share.hidden = state.published !== false || !state.report;
+        share.hidden = state.published !== false || !state.report?.snapshot;
         unshare.hidden = state.published !== true;
         if (state.published === true) {
             publicLink.href = `/u/${state.key.id}`;
@@ -56,11 +56,11 @@ export function setupContributions(
                 ? 'These exact counts will replace matching weeks. Your personal report remains private.'
                 : 'Could not confirm personal report visibility. Replacing weeks is unavailable until visibility is checked.';
     const setBusy = (busy: boolean): void => {
-        confirm.disabled = busy || (!!state.key && state.published === null);
+        confirm.disabled = busy || (!!state.key && (state.published === null || state.report?.snapshot === null));
         close.disabled = busy;
         rotate.disabled = busy;
         remove.disabled = busy;
-        share.disabled = busy || !state.report;
+        share.disabled = busy || !state.report?.snapshot;
         unshare.disabled = busy;
         keyFile.disabled = busy;
     };
@@ -77,8 +77,8 @@ export function setupContributions(
             if (state.key !== key || read.version !== version) return false;
             state.report = saved;
             state.published = saved.published;
-            stored.textContent = formatCounts(saved.snapshot);
-            stored.hidden = false;
+            stored.textContent = saved.snapshot ? formatCounts(saved.snapshot) : '';
+            stored.hidden = !saved.snapshot;
             showKey();
             setBusy(false);
             return true;
@@ -99,6 +99,7 @@ export function setupContributions(
     });
 
     const open = (): void => {
+        read.version++;
         state.snapshot = null;
         if (state.key) {
             state.report = null;
@@ -120,10 +121,17 @@ export function setupContributions(
             }
         })();
         if (!snapshot) {
-            if (state.key) void reconcileVisibility().then((confirmed) => {
-                status.textContent = confirmed ? 'Stored counts and personal report visibility checked.' :
+            if (state.key) {
+                const pending = reconcileVisibility();
+                const version = read.version;
+                void pending.then((confirmed) => {
+                    if (version !== read.version) return;
+                    status.textContent = confirmed ? (state.report?.snapshot
+                        ? 'Stored counts and personal report visibility checked.'
+                        : 'This report is too large to review here. You can still hide or delete it.') :
                     'Could not confirm personal report visibility. Try opening this dialog again.';
-            });
+                });
+            }
             return;
         }
         if (snapshot.weeks.length === 0) {
@@ -136,10 +144,16 @@ export function setupContributions(
             confirm.textContent = state.key ? 'Replace these weeks' : 'Upload these weekly counts';
         }
         setBusy(!!state.key);
-        if (state.key) void reconcileVisibility().then((confirmed) => {
-            status.textContent = confirmed ? (state.snapshot ? previewStatus() : 'Personal report visibility checked.') :
-                'Could not confirm personal report visibility. Try opening this dialog again.';
-        });
+        if (state.key) {
+            const pending = reconcileVisibility();
+            const version = read.version;
+            void pending.then((confirmed) => {
+                if (version !== read.version) return;
+                status.textContent = confirmed ? (state.report?.snapshot ? previewStatus() :
+                    'This report is too large to review here. You can still hide or delete it.') :
+                    'Could not confirm personal report visibility. Try opening this dialog again.';
+            });
+        }
     };
     button.addEventListener('click', open);
     manageButton.addEventListener('click', open);
@@ -158,6 +172,7 @@ export function setupContributions(
                 !/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value.id) ||
                 !/^[A-Za-z0-9_-]{43}$/.test(value.token)) throw new TypeError('Invalid private key.');
             state.key = { id: value.id, token: value.token };
+            read.version++;
             state.published = null;
             state.report = null;
             const response = await fetch(`/api/contributions/${value.id}`, {
@@ -167,18 +182,19 @@ export function setupContributions(
             const saved = parseOwnedReport(await response.json(), value.id);
             state.report = saved;
             state.published = saved.published;
-            stored.textContent = formatCounts(saved.snapshot);
-            stored.hidden = false;
+            stored.textContent = saved.snapshot ? formatCounts(saved.snapshot) : '';
+            stored.hidden = !saved.snapshot;
             showKey();
-            status.textContent = state.snapshot ? previewStatus() :
-                `Private key loaded in this tab. Review all ${saved.snapshot.weeks.length} stored weeks above before sharing. Your report is ${saved.published ? 'already public' : 'private'}.`;
+            status.textContent = !saved.snapshot ? 'This report is too large to review here. You can still hide or delete it.' :
+                state.snapshot ? previewStatus() :
+                    `Private key loaded in this tab. Review all ${saved.snapshot.weeks.length} stored weeks above before sharing. Your report is ${saved.published ? 'already public' : 'private'}.`;
             confirm.textContent = 'Replace these weeks';
         } catch {
             state.key = previous.key;
             state.report = previous.report;
             state.published = previous.published;
-            stored.textContent = previous.report ? formatCounts(previous.report.snapshot) : '';
-            stored.hidden = !previous.report;
+            stored.textContent = previous.report?.snapshot ? formatCounts(previous.report.snapshot) : '';
+            stored.hidden = !previous.report?.snapshot;
             result.hidden = !previous.key;
             showKey();
             status.textContent = previous.key
@@ -188,7 +204,8 @@ export function setupContributions(
     });
 
     confirm.addEventListener('click', async () => {
-        if (!state.snapshot || (state.key && state.published === null)) return;
+        if (!state.snapshot || (state.key && (state.published === null || state.report?.snapshot === null))) return;
+        read.version++;
         setBusy(true);
         status.textContent = 'Compressing and uploading only the displayed weekly counts…';
         try {
@@ -226,8 +243,11 @@ export function setupContributions(
             status.textContent = state.published
                 ? 'Counts updated. Your personal report remains public; save your private key to keep control of it.'
                 : 'Counts uploaded. Your personal report is private. Download your private key before closing this tab; you need it to share, replace, or delete your contribution.';
-            void reconcileVisibility().then((confirmed) => {
-                if (!confirmed) status.textContent = 'Counts uploaded, but current report visibility cannot be checked. Download your key and reopen this dialog to retry.';
+            const pending = reconcileVisibility();
+            const version = read.version;
+            void pending.then((confirmed) => {
+                if (version === read.version && !confirmed) status.textContent =
+                    'Counts uploaded, but current report visibility cannot be checked. Download your key and reopen this dialog to retry.';
             });
             void refresh();
         } catch {
@@ -250,23 +270,25 @@ export function setupContributions(
         downloadBlob(new Blob([JSON.stringify(state.key, null, 2) + '\n'], { type: 'application/json' }), 'model-tides-private-key.json');
     });
     const setSharing = async (published: boolean): Promise<void> => {
-        if (!state.key || state.published === null || (published && !state.report)) return;
+        if (!state.key || state.published === null || (published && !state.report?.snapshot)) return;
         const reviewed = state.report;
         if (published && !window.confirm('Publish every stored week, model, and count displayed above at a public link?')) return;
+        read.version++;
         setBusy(true);
+        const rejected = { value: false };
         try {
             const response = await fetch(`/api/contributions/${state.key.id}/${published ? 'share' : 'unshare'}`, {
                 method: 'POST', headers: { Authorization: `Bearer ${state.key.token}`,
                     ...(published ? { 'X-Model-Tides-Reviewed-Revision': String(reviewed!.revision) } : {}) }, cache: 'no-store',
             });
-            if (!response.ok) throw new Error('Sharing change failed.');
+            if (!response.ok) { rejected.value = true; throw new Error('Sharing change failed.'); }
             const saved: { id: string; published: boolean; url?: string } = await response.json();
             if (saved.id !== state.key.id || saved.published !== published ||
                 (published && saved.url !== `${location.origin}/u/${state.key.id}`)) {
                 throw new Error('Invalid sharing response.');
             }
             state.published = published;
-            state.report = reviewed ? { ...reviewed, published } : null;
+            state.report = reviewed ? { ...reviewed, published, revision: reviewed.revision + 1 } : null;
             showKey();
             status.textContent = !confirm.hidden && state.snapshot ? previewStatus() : published
                 ? 'Personal report published. Anyone with the link can see these weekly counts.'
@@ -278,7 +300,11 @@ export function setupContributions(
             stored.hidden = true;
             showKey();
             const confirmed = await reconcileVisibility();
-            status.textContent = confirmed ? (state.published === published
+            const currentReport = state.report as OwnedReport | null;
+            const matchesReview = !published || (reviewed && currentReport &&
+                currentReport.revision === reviewed.revision + 1 &&
+                JSON.stringify(currentReport.snapshot) === JSON.stringify(reviewed.snapshot));
+            status.textContent = confirmed ? (!rejected.value && matchesReview && state.published === published
                 ? `Personal report is ${published ? 'public' : 'hidden'}. Review stored counts again before sharing.`
                 : 'Sharing was not confirmed. The stored counts may have changed; review them again before sharing.') :
                 'Could not confirm personal report visibility. Try opening this dialog again.';
@@ -298,6 +324,7 @@ export function setupContributions(
             const { token }: { token: string } = await response.json();
             if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error('Invalid rotation response.');
             state.key = { id: state.key.id, token };
+            read.version++;
             status.textContent = 'Private key rotated. Download the new key now; the old file no longer works.';
         } catch { status.textContent = 'Could not rotate the private key. Try again.'; }
         finally { setBusy(false); }
@@ -311,6 +338,7 @@ export function setupContributions(
             });
             if (!response.ok) throw new Error('Deletion failed.');
             state.key = null;
+            read.version++;
             state.report = null;
             state.published = false;
             stored.textContent = '';

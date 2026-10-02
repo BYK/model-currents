@@ -120,7 +120,10 @@ test('CLI sharing changes use only the owner key and never send metadata', async
         const published = url.endsWith('/share');
         return Response.json({ id: owner.id, published, ...(published ? { url: `https://example.test/u/${owner.id}` } : {}) });
     };
-    assert.equal((await setSharing(owner, true, fakeFetch, endpoint, 0)).published, true);
+    assert.equal((await setSharing(owner, true, fakeFetch, endpoint, { revision: 0,
+        snapshot: { format: 'model-tides-weekly', version: 1, weeks: [
+            { week: '2026-09-21', models: { 'openai/gpt-5': 3 } },
+        ] } })).published, true);
     assert.equal((await setSharing(owner, false, fakeFetch, endpoint)).published, false);
     assert.deepEqual(calls.map(({ url, options }) => ({ url, method: options.method, authorization: options.headers.Authorization, body: options.body })), [
         { url: `${endpoint}/${owner.id}/share`, method: 'POST', authorization: `Bearer ${owner.token}`, body: undefined },
@@ -159,17 +162,34 @@ test('CLI shows every stored week before confirming personal report sharing', ()
 
 test('CLI checks a committed sharing change when the response is lost', async () => {
     const owner = { id: '0199abcf-22aa-7333-8abc-0123456789ab', token: 's'.repeat(43) };
-    const state = { published: false, readable: true };
+    const state = { published: false, readable: true, revision: 0 };
     const fetchImpl = async (_url, options) => {
-        if (options.method === 'POST') { state.published = true; throw new Error('private response text'); }
+        if (options.method === 'POST') { state.published = true; state.revision++; throw new Error('private response text'); }
         if (!state.readable) throw new Error('private response text');
-        return Response.json({ id: owner.id, published: state.published, revision: 0,
+        return Response.json({ id: owner.id, published: state.published, revision: state.revision,
             counts: [{ week: '2026-09-28', model: 'openai/gpt-5', count: 1 }] });
     };
-    assert.equal((await setSharing(owner, true, fetchImpl, 'https://example.test/api/contributions', 0)).published, true);
+    const reviewed = { revision: 0, snapshot: { format: 'model-tides-weekly', version: 1, weeks: [
+        { week: '2026-09-28', models: { 'openai/gpt-5': 1 } },
+    ] } };
+    assert.equal((await setSharing(owner, true, fetchImpl, 'https://example.test/api/contributions', reviewed)).published, true);
     state.readable = false;
-    await assert.rejects(setSharing(owner, true, fetchImpl, 'https://example.test/api/contributions', 0),
+    await assert.rejects(setSharing(owner, true, fetchImpl, 'https://example.test/api/contributions', reviewed),
         /change may have happened.*check.*before retrying/i);
+});
+
+test('CLI never reports a rejected share as successful after another session changes and publishes counts', async () => {
+    const owner = { id: '0199abcf-22aa-7333-8abc-0123456789ab', token: 's'.repeat(43) };
+    const fakeFetch = async (_url, options) => options.method === 'POST'
+        ? Response.json({ error: 'Report changed.' }, { status: 409 })
+        : Response.json({ id: owner.id, published: true, revision: 2,
+            counts: [{ week: '2026-09-28', model: 'different/model', count: 9 }] });
+    await assert.rejects(setSharing(owner, true, fakeFetch, 'https://example.test/api/contributions', {
+        revision: 1, snapshot: { format: 'model-tides-weekly', version: 1, weeks: [
+            { week: '2026-09-28', models: { 'openai/gpt-5': 1 } },
+        ] },
+    }),
+        /changed|rejected|review/i);
 });
 
 test('an unlisted gist contains reviewed weekly counts, never private event metadata', () => {

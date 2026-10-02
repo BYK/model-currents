@@ -146,14 +146,15 @@ test('browser verifies a committed share after the response is lost', async () =
     const originalWindow = globalThis.window;
     try {
         const ui = harness();
-        const current = { published: false };
+        const current = { published: false, revision: 0 };
         globalThis.location = { origin: 'https://modeltides.dev' };
         globalThis.window = { confirm: () => true };
         globalThis.fetch = async (url) => {
-            if (url === `/api/contributions/${id}`) return Response.json({ id, published: current.published, revision: 0,
+            if (url === `/api/contributions/${id}`) return Response.json({ id, published: current.published, revision: current.revision,
                 counts: [{ week: '2026-09-28', model: 'openai/gpt-5', count: 1 }] });
             if (url === `/api/contributions/${id}/share`) {
                 current.published = true;
+                current.revision++;
                 throw new Error('Response lost');
             }
             throw new Error('Unexpected request');
@@ -263,6 +264,97 @@ test('reopening the browser manager rechecks report visibility even after a succ
         assert.equal(ui.items['share-contribution'].hidden, true);
         assert.equal(ui.items['unshare-contribution'].hidden, false);
         assert.match(ui.items['contribution-status'].textContent, /already public/i);
+    } finally {
+        globalThis.fetch = originalFetch;
+        globalThis.location = originalLocation;
+        globalThis.window = originalWindow;
+        await browser.close();
+    }
+});
+
+test('a delayed owner read cannot restore a public link after hiding the report', async () => {
+    const browser = await loadBrowser();
+    const originalFetch = globalThis.fetch;
+    const originalLocation = globalThis.location;
+    const originalWindow = globalThis.window;
+    try {
+        const ui = harness();
+        const pending = {};
+        const state = { reads: 0, published: true };
+        globalThis.location = { origin: 'https://modeltides.dev' };
+        globalThis.window = { confirm: () => true };
+        globalThis.fetch = async (url, options) => {
+            if (url === `/api/contributions/${id}` && options?.method === 'PUT') {
+                return Response.json({ id, published: true, replacedWeeks: 1 });
+            }
+            if (url === `/api/contributions/${id}`) {
+                state.reads++;
+                if (state.reads === 2) return new Promise((resolve) => { pending.resolve = resolve; });
+                return Response.json({ id, published: state.published, revision: 0,
+                    counts: [{ week: '2026-09-28', model: 'openai/gpt-5', count: 1 }] });
+            }
+            if (url === `/api/contributions/${id}/unshare`) {
+                state.published = false;
+                return Response.json({ id, published: false });
+            }
+            if (url instanceof URL && url.protocol === 'file:' && url.pathname.endsWith('/brotli_wasm_bg.wasm')) {
+                return new Response(readFileSync(url), { headers: { 'Content-Type': 'application/wasm' } });
+            }
+            throw new Error('Unexpected request');
+        };
+        browser.setupContributions(ui.button, ui.manage, ui.dialog, () => events, async () => {});
+        ui.button.dispatch('click');
+        const key = JSON.stringify({ id, token });
+        ui.items['owner-key-file'].files = [{ size: key.length, text: async () => key }];
+        await ui.items['owner-key-file'].dispatch('change');
+        await ui.items['confirm-contribution'].dispatch('click');
+        assert.equal(typeof pending.resolve, 'function');
+        await ui.items['unshare-contribution'].dispatch('click');
+        await new Promise(setImmediate);
+        assert.equal(ui.items['contribution-public'].hidden, true);
+        pending.resolve(Response.json({ id, published: true, revision: 0,
+            counts: [{ week: '2026-09-28', model: 'openai/gpt-5', count: 1 }] }));
+        await new Promise(setImmediate);
+        assert.equal(ui.items['contribution-public'].hidden, true);
+        assert.equal(ui.items['unshare-contribution'].hidden, true);
+    } finally {
+        globalThis.fetch = originalFetch;
+        globalThis.location = originalLocation;
+        globalThis.window = originalWindow;
+        await browser.close();
+    }
+});
+
+test('browser can hide a migrated public report too large to review in one response', async () => {
+    const browser = await loadBrowser();
+    const originalFetch = globalThis.fetch;
+    const originalLocation = globalThis.location;
+    const originalWindow = globalThis.window;
+    try {
+        const ui = harness();
+        const state = { published: true };
+        globalThis.location = { origin: 'https://modeltides.dev' };
+        globalThis.window = { confirm: () => true };
+        globalThis.fetch = async (url, options) => {
+            if (url === `/api/contributions/${id}`) return Response.json({ id, published: state.published,
+                revision: 0, tooLarge: true });
+            if (url === `/api/contributions/${id}/unshare` && options.method === 'POST') {
+                state.published = false;
+                return Response.json({ id, published: false });
+            }
+            throw new Error('Unexpected request');
+        };
+        browser.setupContributions(ui.button, ui.manage, ui.dialog, () => [], async () => {});
+        ui.manage.dispatch('click');
+        const key = JSON.stringify({ id, token });
+        ui.items['owner-key-file'].files = [{ size: key.length, text: async () => key }];
+        await ui.items['owner-key-file'].dispatch('change');
+        assert.equal(ui.items['contribution-public'].hidden, false);
+        assert.equal(ui.items['share-contribution'].hidden, true);
+        assert.match(ui.items['contribution-status'].textContent, /too large|too many/i);
+        await ui.items['unshare-contribution'].dispatch('click');
+        await new Promise(setImmediate);
+        assert.equal(ui.items['contribution-public'].hidden, true);
     } finally {
         globalThis.fetch = originalFetch;
         globalThis.location = originalLocation;

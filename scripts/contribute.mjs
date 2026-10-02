@@ -157,16 +157,18 @@ export async function getOwnedReport(owner, fetchImpl = fetch, endpoint = api) {
     }
 }
 
-export async function setSharing(owner, published, fetchImpl = fetch, endpoint = api, revision = null) {
-    if (published && (!Number.isSafeInteger(revision) || revision < 0)) {
+export async function setSharing(owner, published, fetchImpl = fetch, endpoint = api, reviewed = null) {
+    if (published && (!reviewed || !reviewed.snapshot || !Number.isSafeInteger(reviewed.revision) || reviewed.revision < 0)) {
         throw new Error('Review every stored weekly count before sharing.');
     }
+    const revision = reviewed?.revision;
+    const response = await fetchImpl(`${endpoint}/${owner.id}/${published ? 'share' : 'unshare'}`, {
+        method: 'POST', headers: { Authorization: `Bearer ${owner.token}`,
+            ...(published ? { 'X-Model-Tides-Reviewed-Revision': String(revision) } : {}) },
+    }).catch(() => null);
+    if (response && !response.ok) throw new Error('Sharing was rejected. Review the current report before retrying.');
     try {
-        const response = await fetchImpl(`${endpoint}/${owner.id}/${published ? 'share' : 'unshare'}`, {
-            method: 'POST', headers: { Authorization: `Bearer ${owner.token}`,
-                ...(published ? { 'X-Model-Tides-Reviewed-Revision': String(revision) } : {}) },
-        });
-        if (!response.ok) throw new TypeError('Sharing response unavailable.');
+        if (!response) throw new TypeError('Sharing response unavailable.');
         const result = await response.json();
         if (result.id !== owner.id || result.published !== published ||
             (published && result.url !== `${new URL(endpoint).origin}/u/${owner.id}`)) {
@@ -176,7 +178,8 @@ export async function setSharing(owner, published, fetchImpl = fetch, endpoint =
     } catch {
         const current = await getOwnedReport(owner, fetchImpl, endpoint).catch(() => null);
         if (!current) throw new Error('Could not confirm personal report visibility. The change may have happened; check before retrying.');
-        if (current.published !== published) {
+        if (current.published !== published || (published &&
+            (current.revision !== revision + 1 || JSON.stringify(current.snapshot) !== JSON.stringify(reviewed.snapshot)))) {
             throw new Error(`The personal report is ${current.published ? 'public' : 'hidden'}. The sharing change was not confirmed; review again before retrying.`);
         }
         return { id: owner.id, published, ...(published ? { url: `${new URL(endpoint).origin}/u/${owner.id}` } : {}) };
@@ -297,13 +300,14 @@ async function main() {
         const published = args[0] === 'share';
         const report = published ? await getOwnedReport(owner) : null;
         if (report) {
+            if (!report.snapshot) throw new Error('The stored report is too large to review. You can still hide or delete it.');
             console.log('Review every stored count below. Sharing publishes all of these weeks, including earlier uploads:');
             preview(report.snapshot);
         }
         if (!await confirm(published
             ? 'Publish all of these personal weekly counts at a public link?'
             : 'Hide your personal report? Your counts will still contribute to the aggregate.')) return;
-        await setSharing(owner, published, fetch, api, report?.revision ?? null);
+        await setSharing(owner, published, fetch, api, report);
         console.log(published ? `Public link: https://modeltides.dev/u/${owner.id}` :
             'Your personal report is hidden. Your weekly counts still contribute to the aggregate.');
         return;

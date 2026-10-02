@@ -1,5 +1,5 @@
 import { brotliDecompressSync } from 'node:zlib';
-import { parseSnapshot, type WeeklySnapshot } from '../src/weekly-snapshot.ts';
+import { MAX_CELLS, MAX_REVIEW_CELLS, MAX_WEEKS, parseSnapshot, type WeeklySnapshot } from '../src/weekly-snapshot.ts';
 export { parseSnapshot } from '../src/weekly-snapshot.ts';
 
 export interface Statement {
@@ -148,15 +148,18 @@ export async function handleContributions(
         const token = bearer(request);
         if (authorization !== null && !token) return response({ error: 'Private token required.' }, 401);
         const access = token ? 'c.token_hash = ?' : 'c.published = 1';
-        const { results } = await db.prepare(`SELECT w.week, w.model, w.count, c.published, c.counts_revision
+        const { results } = await db.prepare(`SELECT w.week, w.model, w.count, c.published, c.report_revision
             FROM contributors c JOIN weekly_counts w ON w.contributor_id = c.id
-            WHERE c.id = ? AND ${access} ORDER BY w.week, w.model`)
-            .bind(id!, ...(token ? [await tokenHash(token)] : [])).all<{
-                week: string; model: string; count: number; published: number; counts_revision: number;
+            WHERE c.id = ? AND ${access} ORDER BY w.week, w.model LIMIT ?`)
+            .bind(id!, ...(token ? [await tokenHash(token)] : []), MAX_REVIEW_CELLS + 1).all<{
+                week: string; model: string; count: number; published: number; report_revision: number;
             }>();
         if (!results.length) return response({ error: 'Not found.' }, 404);
+        if (results.length > MAX_REVIEW_CELLS) return token
+            ? response({ id, published: results[0].published === 1, revision: results[0].report_revision, tooLarge: true })
+            : response({ error: 'Report exceeds the display limit.' }, 413);
         return response({ id, counts: results.map(({ week, model, count }) => ({ week, model, count })),
-            published: results[0].published === 1, ...(token ? { revision: results[0].counts_revision } : {}) });
+            published: results[0].published === 1, ...(token ? { revision: results[0].report_revision } : {}) });
     }
 
     const isCreate = path === privateCreatePath && request.method === 'POST';
@@ -213,8 +216,8 @@ export async function handleContributions(
     if (isShare || isUnshare) {
         const published = isShare ? 1 : 0;
         const sql = isShare
-            ? 'UPDATE contributors SET published = ?, updated_at = ? WHERE id = ? AND token_hash = ? AND counts_revision = ?'
-            : 'UPDATE contributors SET published = ?, updated_at = ? WHERE id = ? AND token_hash = ?';
+            ? 'UPDATE contributors SET published = ?, updated_at = ?, report_revision = report_revision + 1 WHERE id = ? AND token_hash = ? AND report_revision = ?'
+            : 'UPDATE contributors SET published = ?, updated_at = ?, report_revision = report_revision + 1 WHERE id = ? AND token_hash = ?';
         const result = await db.prepare(sql).bind(published, now, id!, hash!, ...(isShare ? [Number(reviewed)] : [])).run();
         if (result.meta.changes !== 1) return response({ error: 'Report changed. Review all counts before sharing.' }, 409);
         return response({ id, published: isShare, ...(isShare ? { url: `${new URL(request.url).origin}/u/${id}` } : {}) });
@@ -233,8 +236,14 @@ export async function handleContributions(
         return response({ id: createdId, published: false, token: secret }, 201);
     }
     const weeks = snapshot.weeks.map(({ week }) => week);
+    const retained = await db.prepare(`SELECT COUNT(*) AS cells, COUNT(DISTINCT week) AS weeks FROM weekly_counts
+        WHERE contributor_id = ? AND week NOT IN (${weeks.map(() => '?').join(', ')})`)
+        .bind(id!, ...weeks).first<{ cells: number; weeks: number }>();
+    if (!retained || retained.cells + entries.length > MAX_CELLS || retained.weeks + weeks.length > MAX_WEEKS) {
+        return response({ error: 'Stored report exceeds the weekly count limit.' }, 413);
+    }
     const result = await db.batch([
-        db.prepare('UPDATE contributors SET updated_at = ?, counts_revision = counts_revision + 1 WHERE id = ? AND token_hash = ? AND published = ?')
+        db.prepare('UPDATE contributors SET updated_at = ?, report_revision = report_revision + 1 WHERE id = ? AND token_hash = ? AND published = ?')
             .bind(now, id!, hash!, expectedPublished),
         db.prepare(`DELETE FROM weekly_counts WHERE contributor_id = ? AND week IN (${weeks.map(() => '?').join(', ')})
             AND EXISTS (SELECT 1 FROM contributors WHERE id = ? AND token_hash = ? AND published = ?)`)

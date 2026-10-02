@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { brotliCompressSync } from 'node:zlib';
+import { createHash } from 'node:crypto';
 import { handleContributions as handleRealContributions, parseSnapshot } from '../worker/contributions.ts';
 import { getReport } from '../worker/public-pages.ts';
 import worker from '../worker/index.ts';
@@ -251,7 +252,13 @@ test('new uploads count toward the aggregate without exposing a personal report 
             method: 'POST', headers: { Authorization: `Bearer ${token}`, 'X-Model-Tides-Reviewed-Revision': '0' },
         }), env);
         assert.deepEqual(await (await share()).json(), { id, published: true, url: `https://modeltides.dev/u/${id}` });
-        assert.equal((await share()).status, 200, 'sharing is idempotent');
+        assert.equal((await share()).status, 409, 'a previous review cannot be reused after publication');
+        const sharedRevision = (await (await read(path, token)).json()).revision;
+        assert.equal(sharedRevision, 1);
+        assert.equal((await handleContributions(new Request(`https://modeltides.dev${sharePath}`, {
+            method: 'POST', headers: { Authorization: `Bearer ${token}`,
+                'X-Model-Tides-Reviewed-Revision': String(sharedRevision) },
+        }), db, limit, sharePath)).status, 200, 'a fresh review can share again without changing counts');
         assert.equal((await read(path)).status, 200);
         assert.equal((await read(path, 'A'.repeat(43))).status, 404, 'a public report never validates an invalid private key');
         assert.equal((await read(`/u/${id}`)).status, 200);
@@ -310,6 +317,113 @@ test('sharing requires a review of all retained weeks and refuses a stale revisi
     } finally { db.close(); }
 });
 
+test('a delayed reviewed share cannot republish a report after an idempotent hide', async () => {
+    const db = database();
+    try {
+        const { id, token } = await (await handleContributions(upload(snapshot()), db, limit,
+            '/api/contributions/private')).json();
+        const path = `/api/contributions/${id}`;
+        const post = (suffix, revision) => handleContributions(new Request(`https://modeltides.dev${path}/${suffix}`, {
+            method: 'POST', headers: { Authorization: `Bearer ${token}`,
+                ...(revision === undefined ? {} : { 'X-Model-Tides-Reviewed-Revision': String(revision) }) },
+        }), db, limit, `${path}/${suffix}`);
+        const reviewed = await (await handleContributions(new Request(`https://modeltides.dev${path}`, {
+            headers: { Authorization: `Bearer ${token}` },
+        }), db, limit, path)).json();
+        assert.equal((await post('unshare')).status, 200, 'even hiding an already hidden report advances visibility');
+        assert.equal((await post('share', reviewed.revision)).status, 409);
+        assert.equal(await getReport(db, id), null);
+    } finally { db.close(); }
+});
+
+test('accumulated cells cannot grow beyond the upload limit, while migrated oversized reports remain manageable', async () => {
+    const db = database();
+    try {
+        const models = Object.fromEntries(Array.from({ length: 2048 }, (_, i) => [`model/${i}`, 1]));
+        const full = { ...snapshot(), weeks: [{ week: '2026-09-28', models }] };
+        const { id, token } = await (await handleContributions(upload(full), db, limit,
+            '/api/contributions/private')).json();
+        const path = `/api/contributions/${id}`;
+        const extra = { ...snapshot(), weeks: [{ week: '2026-09-21', models: { 'older/model': 1 } }] };
+        assert.equal((await handleContributions(upload(extra, path, 'PUT', token), db, limit, path)).status, 413);
+        assert.equal((await db.prepare('SELECT count(*) AS count FROM weekly_counts WHERE contributor_id = ?')
+            .bind(id).first()).count, 2048);
+        const report = await (await handleContributions(new Request(`https://modeltides.dev${path}`, {
+            headers: { Authorization: `Bearer ${token}` },
+        }), db, limit, path)).json();
+        assert.equal(parseOwnedReport(report, id).snapshot.weeks[0].models['model/2047'], 1);
+
+        const old = database(false);
+        try {
+            const oldId = '0199abcf-22aa-7333-8abc-0123456789ab';
+            const oldToken = 's'.repeat(43);
+            const hash = createHash('sha256').update(oldToken).digest('hex');
+            await old.prepare('INSERT INTO contributors (id, token_hash, created_at, updated_at) VALUES (?, ?, ?, ?)')
+                .bind(oldId, hash, 1, 1).run();
+            for (const [model, count] of Object.entries(models)) await old.prepare(
+                'INSERT INTO weekly_counts (contributor_id, week, model, count) VALUES (?, ?, ?, ?)')
+                .bind(oldId, '2026-09-28', model, count).run();
+            await old.prepare('INSERT INTO weekly_counts (contributor_id, week, model, count) VALUES (?, ?, ?, ?)')
+                .bind(oldId, '2026-09-21', 'older/model', 1).run();
+            old.migrate();
+            const oldPath = `/api/contributions/${oldId}`;
+            const migrated = await (await handleContributions(new Request(`https://modeltides.dev${oldPath}`, {
+                headers: { Authorization: `Bearer ${oldToken}` },
+            }), old, limit, oldPath)).json();
+            assert.equal(parseOwnedReport(migrated, oldId).snapshot.weeks.length, 2);
+            assert.equal((await handleContributions(new Request(`https://modeltides.dev${oldPath}/unshare`, {
+                method: 'POST', headers: { Authorization: `Bearer ${oldToken}` },
+            }), old, limit, `${oldPath}/unshare`)).status, 200);
+            assert.equal(await getReport(old, oldId), null);
+            assert.equal((await old.prepare('SELECT count(*) AS count FROM weekly_counts WHERE contributor_id = ?')
+                .bind(oldId).first()).count, 2049);
+        } finally { old.close(); }
+    } finally { db.close(); }
+});
+
+test('stored weeks cannot exceed 520 across valid uploads', async () => {
+    const db = database();
+    try {
+        const first = Date.UTC(2014, 0, 6);
+        const weeks = Array.from({ length: 520 }, (_, index) => ({
+            week: new Date(first + index * 7 * 86_400_000).toISOString().slice(0, 10),
+            models: { 'openai/gpt-5': 1 },
+        }));
+        const { id, token } = await (await handleContributions(upload({ ...snapshot(), weeks }), db, limit,
+            '/api/contributions/private')).json();
+        const path = `/api/contributions/${id}`;
+        const older = { ...snapshot(), weeks: [{ week: '2000-01-03', models: { 'older/model': 1 } }] };
+        assert.equal((await handleContributions(upload(older, path, 'PUT', token), db, limit, path)).status, 413);
+        assert.equal((await db.prepare('SELECT COUNT(DISTINCT week) AS count FROM weekly_counts WHERE contributor_id = ?')
+            .bind(id).first()).count, 520);
+    } finally { db.close(); }
+});
+
+test('an oversized migrated report returns only a bounded owner summary and can still be hidden', async () => {
+    const db = database(false);
+    try {
+        const id = '0199abcf-22aa-7333-8abc-0123456789ab';
+        const token = 's'.repeat(43);
+        await db.prepare('INSERT INTO contributors (id, token_hash, created_at, updated_at) VALUES (?, ?, ?, ?)')
+            .bind(id, createHash('sha256').update(token).digest('hex'), 1, 1).run();
+        const insert = db.prepare('INSERT INTO weekly_counts (contributor_id, week, model, count) VALUES (?, ?, ?, ?)');
+        for (const index of Array.from({ length: 8193 }, (_, i) => i)) {
+            await insert.bind(id, '2026-09-28', `model/${index}`, 1).run();
+        }
+        db.migrate();
+        const path = `/api/contributions/${id}`;
+        const result = await handleContributions(new Request(`https://modeltides.dev${path}`, {
+            headers: { Authorization: `Bearer ${token}` },
+        }), db, limit, path);
+        assert.deepEqual(await result.json(), { id, published: true, revision: 0, tooLarge: true });
+        assert.equal((await handleContributions(new Request(`https://modeltides.dev${path}/unshare`, {
+            method: 'POST', headers: { Authorization: `Bearer ${token}` },
+        }), db, limit, `${path}/unshare`)).status, 200);
+        assert.equal((await db.prepare('SELECT count(*) AS count FROM weekly_counts WHERE contributor_id = ?')
+            .bind(id).first()).count, 8193);
+    } finally { db.close(); }
+});
+
 test('replacement refuses to publish counts if another owner session shared the report after preview', async () => {
     const db = database();
     try {
@@ -338,8 +452,8 @@ test('existing links remain public when the publication migration is applied', a
         await db.prepare('INSERT INTO weekly_counts (contributor_id, week, model, count) VALUES (?, ?, ?, ?)')
             .bind(id, '2026-09-28', 'openai/gpt-5', 1).run();
         db.migrate();
-        assert.deepEqual({ ...await db.prepare('SELECT published, counts_revision FROM contributors WHERE id = ?').bind(id).first() },
-            { published: 1, counts_revision: 0 });
+        assert.deepEqual({ ...await db.prepare('SELECT published, report_revision FROM contributors WHERE id = ?').bind(id).first() },
+            { published: 1, report_revision: 0 });
         assert.equal((await getReport(db, id)).total, 1);
     } finally { db.close(); }
 });
