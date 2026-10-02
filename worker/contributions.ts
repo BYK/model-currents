@@ -3,6 +3,8 @@ import { MAX_CELLS, MAX_REVIEW_CELLS, MAX_WEEKS, parseSnapshot, type WeeklySnaps
 export { parseSnapshot } from '../src/weekly-snapshot.ts';
 
 const storedLimitTrigger = 'MODEL_TIDES_STORED_REPORT_LIMIT';
+// D1 permits at most 100 bound parameters per statement, including statements in batch().
+const maxD1Parameters = 100;
 
 export interface Statement {
     bind(...values: (string | number)[]): Statement;
@@ -100,8 +102,11 @@ function rows(snapshot: WeeklySnapshot): { week: string; model: string; count: n
 
 function insertRows(db: Database, id: string, entries: ReturnType<typeof rows>, hash?: string, expectedPublished?: number): Statement[] {
     const statements: Statement[] = [];
-    for (let start = 0; start < entries.length; start += 50) {
-        const slice = entries.slice(start, start + 50);
+    const perRow = hash ? 3 : 4;
+    const fixed = hash ? 4 : 0;
+    const batchSize = Math.floor((maxD1Parameters - fixed) / perRow);
+    for (let start = 0; start < entries.length; start += batchSize) {
+        const slice = entries.slice(start, start + batchSize);
         const values = slice.flatMap((entry) => [entry.week, entry.model, entry.count]);
         if (hash) {
             if (expectedPublished !== 0 && expectedPublished !== 1) throw new TypeError('Expected report visibility.');
@@ -243,8 +248,8 @@ export async function handleContributions(
     const weeks = snapshot.weeks.map(({ week }) => week);
     const exceedsStoredLimit = async (): Promise<boolean> => {
         const retained = await db.prepare(`SELECT COUNT(*) AS cells, COUNT(DISTINCT week) AS weeks FROM weekly_counts
-            WHERE contributor_id = ? AND week NOT IN (${weeks.map(() => '?').join(', ')})`)
-            .bind(id!, ...weeks).first<{ cells: number; weeks: number }>();
+            WHERE contributor_id = ? AND week NOT IN (SELECT value FROM json_each(?))`)
+            .bind(id!, JSON.stringify(weeks)).first<{ cells: number; weeks: number }>();
         if (!retained) throw new Error('Could not check stored report size.');
         return retained.cells + entries.length > MAX_CELLS || retained.weeks + weeks.length > MAX_WEEKS;
     };
@@ -254,9 +259,9 @@ export async function handleContributions(
     const statements = [
         db.prepare('UPDATE contributors SET updated_at = ?, report_revision = report_revision + 1 WHERE id = ? AND token_hash = ? AND published = ?')
             .bind(now, id!, hash!, expectedPublished),
-        db.prepare(`DELETE FROM weekly_counts WHERE contributor_id = ? AND week IN (${weeks.map(() => '?').join(', ')})
+        db.prepare(`DELETE FROM weekly_counts WHERE contributor_id = ? AND week IN (SELECT value FROM json_each(?))
             AND EXISTS (SELECT 1 FROM contributors WHERE id = ? AND token_hash = ? AND published = ?)`)
-            .bind(id!, ...weeks, id!, hash!, expectedPublished),
+            .bind(id!, JSON.stringify(weeks), id!, hash!, expectedPublished),
         ...insertRows(db, id!, entries, hash!, expectedPublished),
     ];
     const result = await db.batch(statements).catch(async (error: unknown) => {
