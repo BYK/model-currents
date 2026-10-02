@@ -34,7 +34,8 @@ self.addEventListener('fetch', (event) => {
     const scopePath = new URL(self.registration.scope).pathname;
     const appNavigation = event.request.mode === 'navigate' &&
         (requestPath === scopePath || requestPath === scopePath + 'index.html' ||
-            requestPath === scopePath + 'local' || requestPath === scopePath + 'local/');
+            requestPath === scopePath + 'local' || requestPath === scopePath + 'local/' ||
+            requestPath === scopePath + 'gist' || requestPath === scopePath + 'gist/');
     const response = appNavigation
         ? caches.match(self.registration.scope)
         : caches.match(event.request);

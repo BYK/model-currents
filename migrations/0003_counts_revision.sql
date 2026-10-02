@@ -1,0 +1,1 @@
+ALTER TABLE contributors ADD COLUMN counts_revision INTEGER NOT NULL DEFAULT 0;

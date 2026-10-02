@@ -38,21 +38,33 @@ const chart = root.querySelector<HTMLElement>('#gist-chart')!;
 const details = root.querySelector<HTMLDetailsElement>('#gist-details')!;
 const table = root.querySelector<HTMLTableSectionElement>('#gist-table')!;
 const source = root.querySelector<HTMLAnchorElement>('#gist-source')!;
-const match = /^\/gist\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)\/([0-9a-f]{32})\/?$/.exec(window.location.pathname);
+const current = { version: 0 };
 
-if (!match) {
-    status.textContent = 'Invalid gist address.';
-    source.hidden = true;
-} else {
+function showGist(): void {
+    const version = ++current.version;
+    chart.replaceChildren();
+    table.replaceChildren();
+    details.hidden = true;
+    const match = /^#([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)\/([0-9a-f]{32})$/.exec(window.location.hash);
+    if (!match) {
+        status.textContent = 'Invalid gist address.';
+        source.hidden = true;
+        return;
+    }
     const [, owner, id] = match;
-    source.href = `https://gist.github.com/${owner}/${id}`;
-    void loadGistSnapshot(owner, id).then((snapshot) => {
+    status.textContent = 'Loading weekly counts from GitHub…';
+    source.hidden = true;
+    void loadGistSnapshot(owner, id).then(({ snapshot, owner: currentOwner }) => {
+        if (version !== current.version) return;
+        if (currentOwner !== owner) window.history.replaceState(null, '', `/gist#${currentOwner}/${id}`);
+        source.href = `https://gist.github.com/${currentOwner}/${id}`;
+        source.hidden = false;
         const rows = snapshot.weeks.flatMap(({ week, models }) =>
             Object.entries(models).map(([model, count]) => ({ week, model, count })))
             .sort((a, b) => a.week.localeCompare(b.week) || a.model.localeCompare(b.model));
         renderWeeklyRows(chart, rows, 'gist');
         const total = rows.reduce((sum, row) => sum + row.count, 0);
-        status.textContent = `${total.toLocaleString('en-GB')} self-reported model uses across ${snapshot.weeks.length} weeks · unlisted gist by ${owner}`;
+        status.textContent = `${total.toLocaleString('en-GB')} self-reported model uses across ${snapshot.weeks.length} weeks · unlisted gist by ${currentOwner}`;
         const body = document.createDocumentFragment();
         for (const { week, model, count } of rows) {
             const tr = document.createElement('tr');
@@ -66,6 +78,11 @@ if (!match) {
         table.replaceChildren(body);
         details.hidden = false;
     }).catch(() => {
-        status.textContent = 'Could not load this weekly-count gist from GitHub. Check the link and connection.';
+        if (version === current.version) {
+            status.textContent = 'Could not load this weekly-count gist from GitHub. Check the link and connection.';
+        }
     });
 }
+
+window.addEventListener('hashchange', showGist);
+showGist();

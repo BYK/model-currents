@@ -9,9 +9,11 @@ Craft publishes only the package in `cli/`. The repository root remains private.
 
 ## Release
 
-1. Run the GitHub **Release** workflow with a version. Use `1.0.2` for the first Craft release; later releases can use `auto`. Craft bumps only `cli/package.json` and opens a release request.
+1. Run the GitHub **Release** workflow with `auto`. Craft bumps only `cli/package.json` and opens a release request.
 2. Wait for **CI / Build** on Craft's release branch. It runs the tests and build, then uploads the CLI-only `npm-tarball` artifact.
 3. Review the release request and label it `accepted`. The **Publish** workflow checks out the corresponding release branch and runs pinned Craft with npm OIDC. Craft publishes the tarball and creates the GitHub Release.
-4. Check the new version on npm, then verify `npx model-tides@<version> export --output model-tides.json` with synthetic local history. The export command never uploads anything. Only `upload` can share counts, after an explicit `YES`.
+4. Check the new version on npm and its provenance, then verify `npx model-tides@<version> export --output model-tides.json` with synthetic local history. The export command never uploads anything. Only `upload` can send counts, after an explicit `YES`.
+
+When a Worker change introduces new CLI endpoints, merge the tested PR and confirm the protected production migration and deployment before preparing the CLI release. During the gap, the previous CLI receives HTTP 426 for creates or replacements and cannot publish a personal report by accident. Do not announce the homepage's `@latest` command as ready until npm resolves to the new version and a synthetic **released CLI** upload, owner-read, share, unshare, and delete pass. Never use private history for the release check.
 
 The release workflows never cache dependencies. `package-manager-cache: false` is set for each release build.

@@ -19,8 +19,8 @@ test('a gist URL loads weekly counts directly from GitHub, never through Model T
         calls.push({ url, options });
         return Response.json(gist());
     });
-    assert.deepEqual(result, snapshot);
-    assert.equal(gistAddress('BYK', id), `https://modeltides.dev/gist/BYK/${id}`);
+    assert.deepEqual(result, { snapshot, owner: 'BYK' });
+    assert.equal(gistAddress('BYK', id), `https://modeltides.dev/gist#BYK/${id}`);
     assert.deepEqual(calls.map(({ url }) => url), [`https://api.github.com/gists/${id}`]);
     assert.equal(calls[0].options.referrerPolicy, 'no-referrer');
     assert.equal(calls[0].options.cache, 'no-store');
@@ -36,7 +36,8 @@ test('invalid paths, ownership, extra files, private fields, and large gists fai
     await assert.rejects(loadGistSnapshot('BYK', `${id}?private`, fetchGist(gist())), /Invalid gist address/);
     assert.equal(called.length, 0);
     for (const invalid of [
-        { ...gist(), owner: { login: 'different' } },
+        { ...gist(), id: '2'.repeat(32) },
+        { ...gist(), owner: null },
         { ...gist(), files: { ...gist().files, 'private.json': { content: 'private transcript' } } },
         gist(JSON.stringify({ ...snapshot, events: [{ prompt: 'private transcript' }] })),
         gist(JSON.stringify({ ...snapshot, weeks: [{ week: '2026-09-28', models: { example: 10_001 } }] })),
@@ -44,6 +45,12 @@ test('invalid paths, ownership, extra files, private fields, and large gists fai
     ]) {
         await assert.rejects(loadGistSnapshot('BYK', id, fetchGist(invalid)), /Could not load a valid weekly-count gist/);
     }
+});
+
+test('a GitHub username change does not break an ID-based gist link', async () => {
+    const renamed = { ...gist(), owner: { login: 'NewOwner' } };
+    assert.deepEqual(await loadGistSnapshot('BYK', id, async () => Response.json(renamed)),
+        { snapshot, owner: 'NewOwner' });
 });
 
 test('a failed GitHub fetch does not leak its response body or error text', async () => {
@@ -76,16 +83,20 @@ test('the browser renders a gist without sending its contents to Model Tides or 
             createDocumentFragment: element,
             createElement: element,
         };
+        const history = [];
+        const handlers = new Map();
         globalThis.window = {
-            location: { pathname: `/gist/BYK/${id}` },
+            location: { pathname: '/gist', hash: `#BYK/${id}` },
             matchMedia: () => ({ matches: false, addEventListener() {} }),
+            addEventListener(type, handler) { handlers.set(type, handler); },
+            history: { replaceState(_state, _title, url) { history.push(url); } },
         };
         const calls = [];
         globalThis.fetch = async (url) => {
             calls.push(url);
-            return Response.json(gist(JSON.stringify({ ...snapshot, weeks: [
+            return Response.json({ ...gist(JSON.stringify({ ...snapshot, weeks: [
                 { week: '2026-09-28', models: { '<img src=x onerror=alert(1)>': 1 } },
-            ] })));
+            ] })), owner: { login: 'NewOwner' } });
         };
         await server.ssrLoadModule('/src/gist-page.ts');
         await new Promise(setImmediate);
@@ -93,8 +104,14 @@ test('the browser renders a gist without sending its contents to Model Tides or 
         assert.doesNotMatch(items.app.innerHTML + items['gist-chart'].innerHTML, /<img src=x/);
         assert.match(items['gist-chart'].innerHTML, /&lt;img src=x/);
         assert.match(items['gist-status'].textContent, /1 self-reported model uses/);
+        assert.match(items['gist-status'].textContent, /NewOwner/);
+        assert.deepEqual(history, [`/gist#NewOwner/${id}`]);
         assert.equal(items['gist-details'].hidden, false);
-        assert.equal(items['gist-source'].href, `https://gist.github.com/BYK/${id}`);
+        assert.equal(items['gist-source'].href, `https://gist.github.com/NewOwner/${id}`);
+        globalThis.window.location.hash = '#invalid';
+        handlers.get('hashchange')();
+        assert.equal(items['gist-status'].textContent, 'Invalid gist address.');
+        assert.equal(items['gist-source'].hidden, true);
     } finally {
         globalThis.fetch = originalFetch;
         globalThis.window = originalWindow;

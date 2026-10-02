@@ -1,11 +1,12 @@
 import { downloadBlob } from './share-image';
 import type { UsageEvent } from './usage-data';
-import { buildWeeklySnapshot, type WeeklySnapshot } from './weekly-snapshot';
+import { buildWeeklySnapshot, parseOwnedReport, type OwnedReport, type WeeklySnapshot } from './weekly-snapshot';
 
 interface ContributionState {
     snapshot: WeeklySnapshot | null;
     key: { id: string; token: string } | null;
     published: boolean | null;
+    report: OwnedReport | null;
 }
 
 export function setupContributions(
@@ -16,6 +17,7 @@ export function setupContributions(
     refresh: () => Promise<void>,
 ): { clearSnapshot(): void } {
     const preview = dialog.querySelector<HTMLElement>('#contribution-preview')!;
+    const stored = dialog.querySelector<HTMLElement>('#stored-counts')!;
     const status = dialog.querySelector<HTMLElement>('#contribution-status')!;
     const confirm = dialog.querySelector<HTMLButtonElement>('#confirm-contribution')!;
     const close = dialog.querySelector<HTMLButtonElement>('#close-contribution')!;
@@ -28,12 +30,15 @@ export function setupContributions(
     const rotate = dialog.querySelector<HTMLButtonElement>('#rotate-owner-key')!;
     const remove = dialog.querySelector<HTMLButtonElement>('#delete-contribution')!;
     const keyFile = dialog.querySelector<HTMLInputElement>('#owner-key-file')!;
-    const state: ContributionState = { snapshot: null, key: null, published: false };
+    const state: ContributionState = { snapshot: null, key: null, published: false, report: null };
+    const read = { version: 0 };
+    const formatCounts = (snapshot: WeeklySnapshot): string => snapshot.weeks.map(({ week, models }) =>
+        `Week of ${week}\n${Object.entries(models).map(([model, count]) => `  ${model}: ${count}`).join('\n')}`).join('\n\n');
     const showKey = (): void => {
         if (!state.key) return;
         result.hidden = false;
         publicRow.hidden = state.published !== true;
-        share.hidden = state.published !== false;
+        share.hidden = state.published !== false || !state.report;
         unshare.hidden = state.published !== true;
         if (state.published === true) {
             publicLink.href = `/u/${state.key.id}`;
@@ -55,28 +60,34 @@ export function setupContributions(
         close.disabled = busy;
         rotate.disabled = busy;
         remove.disabled = busy;
-        share.disabled = busy;
+        share.disabled = busy || !state.report;
         unshare.disabled = busy;
         keyFile.disabled = busy;
     };
     const reconcileVisibility = async (): Promise<boolean> => {
         const key = state.key;
         if (!key) return false;
+        const version = ++read.version;
         try {
             const response = await fetch(`/api/contributions/${key.id}`, {
                 headers: { Authorization: `Bearer ${key.token}` }, cache: 'no-store',
             });
             if (!response.ok) throw new TypeError('Unknown visibility.');
-            const saved: { id: string; published: boolean } = await response.json();
-            if (saved.id !== key.id || typeof saved.published !== 'boolean') throw new TypeError('Unknown visibility.');
-            if (state.key !== key) return false;
+            const saved = parseOwnedReport(await response.json(), key.id);
+            if (state.key !== key || read.version !== version) return false;
+            state.report = saved;
             state.published = saved.published;
+            stored.textContent = formatCounts(saved.snapshot);
+            stored.hidden = false;
             showKey();
             setBusy(false);
             return true;
         } catch {
-            if (state.key === key) {
+            if (state.key === key && read.version === version) {
+                state.report = null;
                 state.published = null;
+                stored.textContent = '';
+                stored.hidden = true;
                 showKey();
                 setBusy(false);
             }
@@ -89,6 +100,12 @@ export function setupContributions(
 
     const open = (): void => {
         state.snapshot = null;
+        if (state.key) {
+            state.report = null;
+            state.published = null;
+            stored.textContent = '';
+            stored.hidden = true;
+        }
         preview.textContent = '';
         confirm.hidden = true;
         result.hidden = !state.key;
@@ -103,8 +120,8 @@ export function setupContributions(
             }
         })();
         if (!snapshot) {
-            if (state.key && state.published === null) void reconcileVisibility().then((confirmed) => {
-                status.textContent = confirmed ? 'Personal report visibility checked.' :
+            if (state.key) void reconcileVisibility().then((confirmed) => {
+                status.textContent = confirmed ? 'Stored counts and personal report visibility checked.' :
                     'Could not confirm personal report visibility. Try opening this dialog again.';
             });
             return;
@@ -113,14 +130,13 @@ export function setupContributions(
             status.textContent = 'No model observations to upload.';
         } else {
             state.snapshot = snapshot;
-            preview.textContent = snapshot.weeks.map(({ week, models }) =>
-                `Week of ${week}\n${Object.entries(models).map(([model, count]) => `  ${model}: ${count}`).join('\n')}`).join('\n\n');
+            preview.textContent = formatCounts(snapshot);
             status.textContent = previewStatus();
             confirm.hidden = false;
             confirm.textContent = state.key ? 'Replace these weeks' : 'Upload these weekly counts';
         }
-        setBusy(false);
-        if (state.key && state.published === null) void reconcileVisibility().then((confirmed) => {
+        setBusy(!!state.key);
+        if (state.key) void reconcileVisibility().then((confirmed) => {
             status.textContent = confirmed ? (state.snapshot ? previewStatus() : 'Personal report visibility checked.') :
                 'Could not confirm personal report visibility. Try opening this dialog again.';
         });
@@ -132,6 +148,7 @@ export function setupContributions(
         const file = keyFile.files?.[0];
         keyFile.value = '';
         if (!file || file.size > 4096) return;
+        const previous = { key: state.key, report: state.report, published: state.published };
         setBusy(true);
         try {
             const value: unknown = JSON.parse(await file.text());
@@ -140,20 +157,33 @@ export function setupContributions(
                 typeof value.id !== 'string' || typeof value.token !== 'string' ||
                 !/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value.id) ||
                 !/^[A-Za-z0-9_-]{43}$/.test(value.token)) throw new TypeError('Invalid private key.');
+            state.key = { id: value.id, token: value.token };
+            state.published = null;
+            state.report = null;
             const response = await fetch(`/api/contributions/${value.id}`, {
                 headers: { Authorization: `Bearer ${value.token}` }, cache: 'no-store',
             });
             if (!response.ok) throw new TypeError('Invalid private key.');
-            const saved: { id: string; published: boolean } = await response.json();
-            if (saved.id !== value.id || typeof saved.published !== 'boolean') throw new TypeError('Invalid contribution.');
-            state.key = { id: value.id, token: value.token };
+            const saved = parseOwnedReport(await response.json(), value.id);
+            state.report = saved;
             state.published = saved.published;
+            stored.textContent = formatCounts(saved.snapshot);
+            stored.hidden = false;
             showKey();
             status.textContent = state.snapshot ? previewStatus() :
-                'Private key loaded in this tab. You can manage this contribution.';
+                `Private key loaded in this tab. Review all ${saved.snapshot.weeks.length} stored weeks above before sharing. Your report is ${saved.published ? 'already public' : 'private'}.`;
             confirm.textContent = 'Replace these weeks';
         } catch {
-            status.textContent = 'Could not load this private key or its contribution.';
+            state.key = previous.key;
+            state.report = previous.report;
+            state.published = previous.published;
+            stored.textContent = previous.report ? formatCounts(previous.report.snapshot) : '';
+            stored.hidden = !previous.report;
+            result.hidden = !previous.key;
+            showKey();
+            status.textContent = previous.key
+                ? 'Could not load that private key. Your previous contribution is still loaded.'
+                : 'Could not load this private key or its contribution.';
         } finally { setBusy(false); }
     });
 
@@ -188,11 +218,17 @@ export function setupContributions(
             }
             state.key = state.key ?? { id: saved.id, token: saved.token! };
             state.published = saved.published;
+            state.report = null;
+            stored.textContent = '';
+            stored.hidden = true;
             confirm.hidden = true;
             showKey();
             status.textContent = state.published
                 ? 'Counts updated. Your personal report remains public; save your private key to keep control of it.'
                 : 'Counts uploaded. Your personal report is private. Download your private key before closing this tab; you need it to share, replace, or delete your contribution.';
+            void reconcileVisibility().then((confirmed) => {
+                if (!confirmed) status.textContent = 'Counts uploaded, but current report visibility cannot be checked. Download your key and reopen this dialog to retry.';
+            });
             void refresh();
         } catch {
             if (state.key) {
@@ -214,12 +250,14 @@ export function setupContributions(
         downloadBlob(new Blob([JSON.stringify(state.key, null, 2) + '\n'], { type: 'application/json' }), 'model-tides-private-key.json');
     });
     const setSharing = async (published: boolean): Promise<void> => {
-        if (!state.key || state.published === null) return;
-        if (published && !window.confirm('Publish your personal weekly counts at a public link?')) return;
+        if (!state.key || state.published === null || (published && !state.report)) return;
+        const reviewed = state.report;
+        if (published && !window.confirm('Publish every stored week, model, and count displayed above at a public link?')) return;
         setBusy(true);
         try {
             const response = await fetch(`/api/contributions/${state.key.id}/${published ? 'share' : 'unshare'}`, {
-                method: 'POST', headers: { Authorization: `Bearer ${state.key.token}` }, cache: 'no-store',
+                method: 'POST', headers: { Authorization: `Bearer ${state.key.token}`,
+                    ...(published ? { 'X-Model-Tides-Reviewed-Revision': String(reviewed!.revision) } : {}) }, cache: 'no-store',
             });
             if (!response.ok) throw new Error('Sharing change failed.');
             const saved: { id: string; published: boolean; url?: string } = await response.json();
@@ -228,16 +266,21 @@ export function setupContributions(
                 throw new Error('Invalid sharing response.');
             }
             state.published = published;
+            state.report = reviewed ? { ...reviewed, published } : null;
             showKey();
             status.textContent = !confirm.hidden && state.snapshot ? previewStatus() : published
                 ? 'Personal report published. Anyone with the link can see these weekly counts.'
                 : 'Personal report hidden. Your weekly counts still contribute to the community aggregate.';
         } catch {
             state.published = null;
+            state.report = null;
+            stored.textContent = '';
+            stored.hidden = true;
             showKey();
             const confirmed = await reconcileVisibility();
-            status.textContent = confirmed ? (state.snapshot && !confirm.hidden ? previewStatus() :
-                state.published ? 'Personal report is public.' : 'Personal report is hidden.') :
+            status.textContent = confirmed ? (state.published === published
+                ? `Personal report is ${published ? 'public' : 'hidden'}. Review stored counts again before sharing.`
+                : 'Sharing was not confirmed. The stored counts may have changed; review them again before sharing.') :
                 'Could not confirm personal report visibility. Try opening this dialog again.';
         }
         finally { setBusy(false); }
@@ -268,7 +311,10 @@ export function setupContributions(
             });
             if (!response.ok) throw new Error('Deletion failed.');
             state.key = null;
+            state.report = null;
             state.published = false;
+            stored.textContent = '';
+            stored.hidden = true;
             result.hidden = true;
             status.textContent = 'Contribution deleted. Your imported history remains in this tab.';
             void refresh();

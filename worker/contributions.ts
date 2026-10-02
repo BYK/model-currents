@@ -148,12 +148,15 @@ export async function handleContributions(
         const token = bearer(request);
         if (authorization !== null && !token) return response({ error: 'Private token required.' }, 401);
         const access = token ? 'c.token_hash = ?' : 'c.published = 1';
-        const { results } = await db.prepare(`SELECT w.week, w.model, w.count, c.published
+        const { results } = await db.prepare(`SELECT w.week, w.model, w.count, c.published, c.counts_revision
             FROM contributors c JOIN weekly_counts w ON w.contributor_id = c.id
             WHERE c.id = ? AND ${access} ORDER BY w.week, w.model`)
-            .bind(id!, ...(token ? [await tokenHash(token)] : [])).all<{ week: string; model: string; count: number; published: number }>();
+            .bind(id!, ...(token ? [await tokenHash(token)] : [])).all<{
+                week: string; model: string; count: number; published: number; counts_revision: number;
+            }>();
         if (!results.length) return response({ error: 'Not found.' }, 404);
-        return response({ id, counts: results.map(({ week, model, count }) => ({ week, model, count })), published: results[0].published === 1 });
+        return response({ id, counts: results.map(({ week, model, count }) => ({ week, model, count })),
+            published: results[0].published === 1, ...(token ? { revision: results[0].counts_revision } : {}) });
     }
 
     const isCreate = path === privateCreatePath && request.method === 'POST';
@@ -181,6 +184,11 @@ export async function handleContributions(
         return response({ error: 'Update Model Tides before replacing a contribution.' }, 426);
     }
     const expectedPublished = expectedVisibility === 'public' ? 1 : 0;
+    const reviewed = isShare ? request.headers.get('X-Model-Tides-Reviewed-Revision') : null;
+    if (isShare && (reviewed === null || !/^(0|[1-9]\d*)$/.test(reviewed) ||
+        !Number.isSafeInteger(Number(reviewed)))) {
+        return response({ error: 'Update Model Tides and review every weekly count before sharing.' }, 426);
+    }
     const rate = await limit.limit({ key: `write:${request.headers.get('CF-Connecting-IP') ?? 'unattributed'}` });
     if (!rate.success) return response({ error: 'Too many uploads. Try again later.' }, 429);
     const hash = token ? await tokenHash(token) : null;
@@ -204,9 +212,11 @@ export async function handleContributions(
     }
     if (isShare || isUnshare) {
         const published = isShare ? 1 : 0;
-        const result = await db.prepare('UPDATE contributors SET published = ?, updated_at = ? WHERE id = ? AND token_hash = ?')
-            .bind(published, now, id!, hash!).run();
-        if (result.meta.changes !== 1) return response({ error: 'Invalid contribution or token.' }, 401);
+        const sql = isShare
+            ? 'UPDATE contributors SET published = ?, updated_at = ? WHERE id = ? AND token_hash = ? AND counts_revision = ?'
+            : 'UPDATE contributors SET published = ?, updated_at = ? WHERE id = ? AND token_hash = ?';
+        const result = await db.prepare(sql).bind(published, now, id!, hash!, ...(isShare ? [Number(reviewed)] : [])).run();
+        if (result.meta.changes !== 1) return response({ error: 'Report changed. Review all counts before sharing.' }, 409);
         return response({ id, published: isShare, ...(isShare ? { url: `${new URL(request.url).origin}/u/${id}` } : {}) });
     }
     const snapshot = await readSnapshot(request);
@@ -224,7 +234,7 @@ export async function handleContributions(
     }
     const weeks = snapshot.weeks.map(({ week }) => week);
     const result = await db.batch([
-        db.prepare('UPDATE contributors SET updated_at = ? WHERE id = ? AND token_hash = ? AND published = ?')
+        db.prepare('UPDATE contributors SET updated_at = ?, counts_revision = counts_revision + 1 WHERE id = ? AND token_hash = ? AND published = ?')
             .bind(now, id!, hash!, expectedPublished),
         db.prepare(`DELETE FROM weekly_counts WHERE contributor_id = ? AND week IN (${weeks.map(() => '?').join(', ')})
             AND EXISTS (SELECT 1 FROM contributors WHERE id = ? AND token_hash = ? AND published = ?)`)

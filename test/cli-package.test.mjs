@@ -70,10 +70,15 @@ test('npm package includes the local converters, metadata validator, and command
         assert.doesNotMatch(repeatedLink, new RegExp(token));
 
         writeFileSync(interceptor, `globalThis.fetch = async (url, options) => {
+            if (url === 'https://modeltides.dev/api/contributions/${id}' && options?.method === undefined) {
+                return Response.json({ id: '${id}', published: false, revision: 0,
+                    counts: [{ week: '2026-09-28', model: 'openai/gpt-5', count: 1 }] });
+            }
             if (options?.method !== 'POST' || options?.headers?.Authorization !== 'Bearer ${token}') {
                 throw new Error('Share requires the existing owner key.');
             }
             if (url === 'https://modeltides.dev/api/contributions/${id}/share') {
+                if (options.headers['X-Model-Tides-Reviewed-Revision'] !== '0') throw new Error('Reviewed revision required.');
                 return Response.json({ id: '${id}', published: true, url: 'https://modeltides.dev/u/${id}' });
             }
             if (url === 'https://modeltides.dev/api/contributions/${id}/unshare') {
@@ -84,6 +89,7 @@ test('npm package includes the local converters, metadata validator, and command
         const shared = execFileSync('node', ['--import', interceptor, bin, 'share'], {
             cwd: directory, encoding: 'utf8', input: 'YES\n', env: environment,
         });
+        assert.match(shared, /Week of 2026-09-28\s+openai\/gpt-5: 1/);
         assert.match(shared, new RegExp(`Public link: https://modeltides\\.dev/u/${id}`));
         const hidden = execFileSync('node', ['--import', interceptor, bin, 'unshare'], {
             cwd: directory, encoding: 'utf8', input: 'YES\n', env: environment,

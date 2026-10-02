@@ -8,7 +8,7 @@ const maxSnapshotBytes = 512 * 1024;
 
 export function gistAddress(owner: string, id: string): string {
     if (!gistOwner.test(owner) || !gistId.test(id)) throw new TypeError('Invalid gist address.');
-    return `https://modeltides.dev/gist/${owner}/${id}`;
+    return `https://modeltides.dev/gist#${owner}/${id}`;
 }
 
 async function boundedJson(response: Response): Promise<unknown> {
@@ -39,7 +39,9 @@ async function boundedJson(response: Response): Promise<unknown> {
     return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
 }
 
-export async function loadGistSnapshot(owner: string, id: string, fetchImpl: typeof fetch = fetch): Promise<WeeklySnapshot> {
+export async function loadGistSnapshot(owner: string, id: string, fetchImpl: typeof fetch = fetch): Promise<{
+    snapshot: WeeklySnapshot; owner: string;
+}> {
     gistAddress(owner, id);
     try {
         const response = await fetchImpl(`https://api.github.com/gists/${id}`, {
@@ -52,7 +54,7 @@ export async function loadGistSnapshot(owner: string, id: string, fetchImpl: typ
         if (!gist || typeof gist !== 'object' || !('id' in gist) || gist.id !== id ||
             !('owner' in gist) || !gist.owner || typeof gist.owner !== 'object' ||
             !('login' in gist.owner) || typeof gist.owner.login !== 'string' ||
-            gist.owner.login.toLowerCase() !== owner.toLowerCase() ||
+            !gistOwner.test(gist.owner.login) ||
             !('files' in gist) || !gist.files || typeof gist.files !== 'object' ||
             Object.keys(gist.files).length !== 1 || !(gistFile in gist.files)) {
             throw new TypeError('Unexpected gist.');
@@ -63,7 +65,7 @@ export async function loadGistSnapshot(owner: string, id: string, fetchImpl: typ
             new TextEncoder().encode(file.content).byteLength > maxSnapshotBytes) {
             throw new TypeError('Unexpected gist file.');
         }
-        return parseSnapshot(JSON.parse(file.content));
+        return { snapshot: parseSnapshot(JSON.parse(file.content)), owner: gist.owner.login };
     } catch {
         throw new TypeError('Could not load a valid weekly-count gist.');
     }

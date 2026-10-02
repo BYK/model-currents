@@ -6,13 +6,17 @@ import { brotliCompressSync } from 'node:zlib';
 import { handleContributions as handleRealContributions, parseSnapshot } from '../worker/contributions.ts';
 import { getReport } from '../worker/public-pages.ts';
 import worker from '../worker/index.ts';
-import { buildWeeklySnapshot } from '../src/weekly-snapshot.ts';
+import { buildWeeklySnapshot, parseOwnedReport } from '../src/weekly-snapshot.ts';
 
-function database() {
+function database(migrated = true) {
     const sqlite = new DatabaseSync(':memory:');
     sqlite.exec('PRAGMA foreign_keys = ON');
     sqlite.exec(readFileSync(new URL('../migrations/0001_contributions.sql', import.meta.url), 'utf8'));
-    sqlite.exec(readFileSync(new URL('../migrations/0002_private_contributions.sql', import.meta.url), 'utf8'));
+    const migrate = () => {
+        sqlite.exec(readFileSync(new URL('../migrations/0002_private_contributions.sql', import.meta.url), 'utf8'));
+        sqlite.exec(readFileSync(new URL('../migrations/0003_counts_revision.sql', import.meta.url), 'utf8'));
+    };
+    if (migrated) migrate();
     const prepare = (sql) => {
         const statement = {
             values: [],
@@ -45,6 +49,7 @@ function database() {
             }
         },
         close() { sqlite.close(); },
+        migrate,
     };
 }
 
@@ -123,6 +128,22 @@ test('reject unsupported schemas, extra fields, bad weeks, excessive counts, and
         { ...valid, weeks: [{ week: '2026-09-28', models: { ok: 1 }, transcript: 'private' }] },
         { ...valid, weeks: [...valid.weeks, ...valid.weeks] },
     ]) assert.throws(() => parseSnapshot(invalid), TypeError);
+});
+
+test('owner review rejects malformed counts, duplicate cells, and untrusted revisions', () => {
+    const id = '0199abcf-22aa-7333-8abc-0123456789ab';
+    const report = { id, published: false, revision: 0,
+        counts: [{ week: '2026-09-28', model: 'openai/gpt-5', count: 1 }] };
+    assert.deepEqual(parseOwnedReport(report, id).snapshot.weeks, [
+        { week: '2026-09-28', models: { 'openai/gpt-5': 1 } },
+    ]);
+    for (const invalid of [
+        { ...report, revision: -1 }, { ...report, revision: '0' },
+        { ...report, counts: [...report.counts, ...report.counts] },
+        { ...report, counts: [{ ...report.counts[0], text: 'private prompt' }] },
+        { ...report, counts: [] }, { ...report, counts: [{ ...report.counts[0], week: '2026-09-27' }] },
+        { ...report, events: [{ text: 'private prompt' }] },
+    ]) assert.throws(() => parseOwnedReport(invalid, id), TypeError);
 });
 
 test('reviewed historical and route-specific model IDs can be shared without a registry request', async () => {
@@ -224,10 +245,10 @@ test('new uploads count toward the aggregate without exposing a personal report 
         const sharePath = `${path}/share`;
         assert.equal((await worker.fetch(new Request(`https://modeltides.dev${sharePath}`, { method: 'POST' }), env)).status, 401);
         assert.equal((await worker.fetch(new Request(`https://modeltides.dev${sharePath}`, {
-            method: 'POST', headers: { Authorization: `Bearer ${'A'.repeat(43)}` },
+            method: 'POST', headers: { Authorization: `Bearer ${'A'.repeat(43)}`, 'X-Model-Tides-Reviewed-Revision': '0' },
         }), env)).status, 401);
         const share = () => worker.fetch(new Request(`https://modeltides.dev${sharePath}`, {
-            method: 'POST', headers: { Authorization: `Bearer ${token}` },
+            method: 'POST', headers: { Authorization: `Bearer ${token}`, 'X-Model-Tides-Reviewed-Revision': '0' },
         }), env);
         assert.deepEqual(await (await share()).json(), { id, published: true, url: `https://modeltides.dev/u/${id}` });
         assert.equal((await share()).status, 200, 'sharing is idempotent');
@@ -256,6 +277,39 @@ test('new uploads count toward the aggregate without exposing a personal report 
     } finally { db.close(); }
 });
 
+test('sharing requires a review of all retained weeks and refuses a stale revision', async () => {
+    const db = database();
+    try {
+        const created = await handleContributions(upload(snapshot()), db, limit, '/api/contributions/private');
+        const { id, token } = await created.json();
+        const path = `/api/contributions/${id}`;
+        const read = async () => (await handleContributions(new Request(`https://modeltides.dev${path}`, {
+            headers: { Authorization: `Bearer ${token}` },
+        }), db, limit, path)).json();
+        const first = await read();
+        assert.equal(first.revision, 0);
+        const older = { ...snapshot(), weeks: [{ week: '2026-09-21', models: { 'openai/gpt-5': 4 } }] };
+        const replaced = await handleContributions(upload(older, path, 'PUT', token), db, limit, path);
+        assert.equal(replaced.status, 200);
+        const reviewed = await read();
+        assert.equal(reviewed.revision, 1);
+        assert.deepEqual(reviewed.counts, [
+            { week: '2026-09-21', model: 'openai/gpt-5', count: 4 },
+            { week: '2026-09-28', model: 'anthropic/claude-sonnet', count: 2 },
+        ], 'the owner sees retained weeks as well as newly replaced weeks');
+        const sharePath = `${path}/share`;
+        const share = (revision) => handleContributions(new Request(`https://modeltides.dev${sharePath}`, {
+            method: 'POST', headers: { Authorization: `Bearer ${token}`,
+                ...(revision === null ? {} : { 'X-Model-Tides-Reviewed-Revision': String(revision) }) },
+        }), db, limit, sharePath);
+        assert.equal((await share(null)).status, 426, 'old clients cannot publish without a review');
+        assert.equal((await share(first.revision)).status, 409, 'stale review cannot publish retained or new counts');
+        assert.equal(await getReport(db, id), null);
+        assert.equal((await share(reviewed.revision)).status, 200);
+        assert.equal((await getReport(db, id)).total, 6);
+    } finally { db.close(); }
+});
+
 test('replacement refuses to publish counts if another owner session shared the report after preview', async () => {
     const db = database();
     try {
@@ -264,7 +318,7 @@ test('replacement refuses to publish counts if another owner session shared the 
         const path = `/api/contributions/${id}`;
         const sharePath = `${path}/share`;
         assert.equal((await handleContributions(new Request(`https://modeltides.dev${sharePath}`, {
-            method: 'POST', headers: { Authorization: `Bearer ${token}` },
+            method: 'POST', headers: { Authorization: `Bearer ${token}`, 'X-Model-Tides-Reviewed-Revision': '0' },
         }), db, limit, sharePath)).status, 200);
         const outdated = await handleContributions(upload(snapshot(9), path, 'PUT', token, 'private'), db, limit, path);
         assert.equal(outdated.status, 409);
@@ -276,13 +330,16 @@ test('replacement refuses to publish counts if another owner session shared the 
 });
 
 test('existing links remain public when the publication migration is applied', async () => {
-    const db = database();
+    const db = database(false);
     try {
         const id = '0199abcf-22aa-7333-8abc-0123456789ab';
         await db.prepare('INSERT INTO contributors (id, token_hash, created_at, updated_at) VALUES (?, ?, ?, ?)')
             .bind(id, 'previously-published', 1, 1).run();
         await db.prepare('INSERT INTO weekly_counts (contributor_id, week, model, count) VALUES (?, ?, ?, ?)')
             .bind(id, '2026-09-28', 'openai/gpt-5', 1).run();
+        db.migrate();
+        assert.deepEqual({ ...await db.prepare('SELECT published, counts_revision FROM contributors WHERE id = ?').bind(id).first() },
+            { published: 1, counts_revision: 0 });
         assert.equal((await getReport(db, id)).total, 1);
     } finally { db.close(); }
 });

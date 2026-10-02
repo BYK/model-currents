@@ -16,6 +16,13 @@ export interface WeeklySnapshot {
     readonly weeks: readonly { readonly week: string; readonly models: Readonly<Record<string, number>> }[];
 }
 
+export interface OwnedReport {
+    readonly id: string;
+    readonly published: boolean;
+    readonly revision: number;
+    readonly snapshot: WeeklySnapshot;
+}
+
 export function validWeeklyModel(model: unknown): model is string {
     return typeof model === 'string' && model.length > 0 && model.length <= 320 &&
         model === model.trim() && !/[\u0000-\u001f\u007f\ud800-\udfff]/u.test(model);
@@ -66,6 +73,32 @@ export function parseSnapshot(input: unknown): WeeklySnapshot {
     }, 0);
     if (cells < 1 || cells > MAX_CELLS) throw new TypeError('Invalid weekly snapshot.');
     return { format: WEEKLY_FORMAT, version: WEEKLY_VERSION, weeks };
+}
+
+export function parseOwnedReport(input: unknown, id: string): OwnedReport {
+    if (!exactKeys(input, ['id', 'counts', 'published', 'revision']) || input.id !== id ||
+        typeof input.published !== 'boolean' || !Number.isSafeInteger(input.revision) ||
+        (input.revision as number) < 0 || !Array.isArray(input.counts) ||
+        input.counts.length < 1 || input.counts.length > MAX_CELLS) {
+        throw new TypeError('Invalid personal report.');
+    }
+    const weeks = new Map<string, Map<string, number>>();
+    for (const row of input.counts) {
+        if (!exactKeys(row, ['week', 'model', 'count']) || typeof row.week !== 'string' ||
+            !validWeeklyModel(row.model) || !Number.isSafeInteger(row.count) ||
+            (row.count as number) < 1 || (row.count as number) > MAX_MODEL_COUNT) {
+            throw new TypeError('Invalid personal report.');
+        }
+        const models = weeks.get(row.week) ?? new Map<string, number>();
+        if (models.has(row.model)) throw new TypeError('Invalid personal report.');
+        models.set(row.model, row.count as number);
+        weeks.set(row.week, models);
+    }
+    const snapshot = parseSnapshot({ format: WEEKLY_FORMAT, version: WEEKLY_VERSION,
+        weeks: [...weeks].sort(([a], [b]) => a.localeCompare(b)).map(([week, models]) => ({
+            week, models: Object.fromEntries([...models].sort(([a], [b]) => a.localeCompare(b))),
+        })) });
+    return { id, published: input.published, revision: input.revision as number, snapshot };
 }
 
 export function buildWeeklySnapshot(events: Iterable<Pick<UsageEvent, 'time' | 'model'>>): WeeklySnapshot {

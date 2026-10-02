@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { brotliCompressSync } from 'node:zlib';
 import { parseUsageDocument, MAX_EVENTS, MAX_JSON_BYTES } from '../src/usage-data.ts';
-import { buildWeeklySnapshot } from '../src/weekly-snapshot.ts';
+import { buildWeeklySnapshot, parseOwnedReport } from '../src/weekly-snapshot.ts';
 
 const scripts = new URL('.', import.meta.url);
 const api = 'https://modeltides.dev/api/contributions';
@@ -145,30 +145,47 @@ export async function publishSnapshot(snapshot, owner = null, fetchImpl = fetch,
     return response.json();
 }
 
-export async function setSharing(owner, published, fetchImpl = fetch, endpoint = api) {
-    const response = await fetchImpl(`${endpoint}/${owner.id}/${published ? 'share' : 'unshare'}`, {
-        method: 'POST', headers: { Authorization: `Bearer ${owner.token}` },
-    });
-    if (!response.ok) throw new Error(`Sharing change failed (HTTP ${response.status}).`);
-    const result = await response.json();
-    if (result.id !== owner.id || result.published !== published ||
-        (published && result.url !== `${new URL(endpoint).origin}/u/${owner.id}`)) {
-        throw new Error('Invalid sharing response.');
-    }
-    return result;
-}
-
-export async function reportVisibility(owner, fetchImpl = fetch, endpoint = api) {
+export async function getOwnedReport(owner, fetchImpl = fetch, endpoint = api) {
     try {
         const response = await fetchImpl(`${endpoint}/${owner.id}`, {
             headers: { Authorization: `Bearer ${owner.token}` }, cache: 'no-store',
         });
-        if (!response.ok) throw new TypeError('Unknown visibility.');
+        if (!response.ok) throw new TypeError('Unavailable report.');
+        return parseOwnedReport(await response.json(), owner.id);
+    } catch {
+        throw new Error('Could not confirm personal report visibility and counts. No sharing change was started.');
+    }
+}
+
+export async function setSharing(owner, published, fetchImpl = fetch, endpoint = api, revision = null) {
+    if (published && (!Number.isSafeInteger(revision) || revision < 0)) {
+        throw new Error('Review every stored weekly count before sharing.');
+    }
+    try {
+        const response = await fetchImpl(`${endpoint}/${owner.id}/${published ? 'share' : 'unshare'}`, {
+            method: 'POST', headers: { Authorization: `Bearer ${owner.token}`,
+                ...(published ? { 'X-Model-Tides-Reviewed-Revision': String(revision) } : {}) },
+        });
+        if (!response.ok) throw new TypeError('Sharing response unavailable.');
         const result = await response.json();
-        if (!result || result.id !== owner.id || typeof result.published !== 'boolean') {
-            throw new TypeError('Unknown visibility.');
+        if (result.id !== owner.id || result.published !== published ||
+            (published && result.url !== `${new URL(endpoint).origin}/u/${owner.id}`)) {
+            throw new TypeError('Invalid sharing response.');
         }
-        return result.published;
+        return result;
+    } catch {
+        const current = await getOwnedReport(owner, fetchImpl, endpoint).catch(() => null);
+        if (!current) throw new Error('Could not confirm personal report visibility. The change may have happened; check before retrying.');
+        if (current.published !== published) {
+            throw new Error(`The personal report is ${current.published ? 'public' : 'hidden'}. The sharing change was not confirmed; review again before retrying.`);
+        }
+        return { id: owner.id, published, ...(published ? { url: `${new URL(endpoint).origin}/u/${owner.id}` } : {}) };
+    }
+}
+
+export async function reportVisibility(owner, fetchImpl = fetch, endpoint = api) {
+    try {
+        return (await getOwnedReport(owner, fetchImpl, endpoint)).published;
     } catch {
         throw new Error('Could not confirm personal report visibility. No upload was started.');
     }
@@ -259,7 +276,7 @@ async function main() {
         });
         const owner = match[1] ?? (identity?.status === 0 ? identity.stdout.trim() : '');
         if (/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(owner)) {
-            console.log(`View in browser: https://modeltides.dev/gist/${owner}/${match[2]}`);
+            console.log(`View in browser: https://modeltides.dev/gist#${owner}/${match[2]}`);
         } else {
             console.log('The gist was created. Its Model Tides viewer link could not be determined; open the gist URL above.');
         }
@@ -278,10 +295,15 @@ async function main() {
         const owner = loadCredential();
         if (!owner) throw new Error('No private key file exists for this contribution. Upload weekly counts first.');
         const published = args[0] === 'share';
+        const report = published ? await getOwnedReport(owner) : null;
+        if (report) {
+            console.log('Review every stored count below. Sharing publishes all of these weeks, including earlier uploads:');
+            preview(report.snapshot);
+        }
         if (!await confirm(published
-            ? 'Publish your personal weekly counts at a public link?'
+            ? 'Publish all of these personal weekly counts at a public link?'
             : 'Hide your personal report? Your counts will still contribute to the aggregate.')) return;
-        await setSharing(owner, published);
+        await setSharing(owner, published, fetch, api, report?.revision ?? null);
         console.log(published ? `Public link: https://modeltides.dev/u/${owner.id}` :
             'Your personal report is hidden. Your weekly counts still contribute to the aggregate.');
         return;

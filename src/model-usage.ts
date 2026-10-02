@@ -156,6 +156,8 @@ root.innerHTML = `
                 <p id="contribution-public" hidden>Public link: <a id="contribution-link" target="_blank" rel="noopener noreferrer"></a></p>
                 <button id="download-owner-key" type="button" class="import-button">Download private key</button>
                 <p>Keep this file private. Import it here to manage your contribution.</p>
+                <p>Before sharing, review every stored week, model, and count below. Older weeks remain even when you replace other weeks.</p>
+                <pre id="stored-counts" class="contribution-preview" hidden></pre>
                 <button id="share-contribution" type="button" class="text-button">Share personal report</button>
                 <button id="unshare-contribution" type="button" class="text-button" hidden>Hide personal report</button>
                 <button id="rotate-owner-key" type="button" class="text-button">Rotate private key</button>
