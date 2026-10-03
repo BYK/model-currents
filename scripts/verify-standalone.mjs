@@ -24,10 +24,12 @@ try {
 
     const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(root, 'config') };
     const help = spawnSync(command, ['help'], { encoding: 'utf8', env, timeout: 20_000 });
+    assert.ifError(help.error);
     assert.equal(help.status, 0, help.stderr);
     assert.match(help.stdout, /upload.*contribute.*withdraw/s);
     const output = join(root, 'metadata.json');
     const exported = spawnSync(command, ['export', '--output', output], { encoding: 'utf8', env, timeout: 20_000 });
+    assert.ifError(exported.error);
     assert.equal(exported.status, 0, exported.stderr);
     const json = readFileSync(output, 'utf8');
     assert.deepEqual(JSON.parse(json), { format: 'model-tides', version: 1, source: 'opencode', events: [
