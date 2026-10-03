@@ -47,6 +47,33 @@ function assertBandsClose(actual, expected) {
     }
 }
 
+function ribbonEdges(svg, from, to) {
+    const path = [...svg.matchAll(/<path class="flow-ribbon flow-inferred" d="([^"]+)"[^>]*data-flow-pairs="\[\[&quot;([^&]+)&quot;,&quot;([^&]+)&quot;\]\]"/g)]
+        .find(([, , source, target]) => source === from && target === to);
+    assert.ok(path, `expected an inferred ${from} → ${to} ribbon`);
+    const coordinates = path[1].match(/-?\d+(?:\.\d+)?/g).map(Number);
+    return { fromTop: coordinates[1], fromBottom: coordinates[15], toTop: coordinates[5], toBottom: coordinates[9] };
+}
+
+function continuityEdges(svg, key) {
+    const path = [...svg.matchAll(/<path class="continuity-ribbon" d="([^"]+)"[^>]*data-flow-pairs="\[\[null,&quot;([^&]+)&quot;\]\]"/g)]
+        .find(([, , model]) => model === key);
+    assert.ok(path, `expected ${key} continuity`);
+    const coordinates = path[1].match(/-?\d+(?:\.\d+)?/g).map(Number);
+    return { fromTop: coordinates[1], fromBottom: coordinates[15], toTop: coordinates[5], toBottom: coordinates[9] };
+}
+
+function nodeEdges(svg, period, key) {
+    const node = [...svg.matchAll(/<rect class="usage-node" x="[^"]+" y="([^"]+)" width="[^"]+" height="([^"]+)"[^>]*><title>([^<]+)<\/title>/g)]
+        .find(([, , , title]) => title.startsWith(`${period} · ${key} ·`));
+    assert.ok(node, `expected ${key} node in ${period}`);
+    return { top: Number(node[1]), bottom: Number(node[1]) + Number(node[2]) };
+}
+
+function assertNear(actual, expected) {
+    assert.ok(Math.abs(actual - expected) < 0.000001, `expected ${actual} near ${expected}`);
+}
+
 test('same-model continuity resizes to activity in each adjacent period', () => {
     const svg = render([
         { time: january + 86_400_000, to: 'model-a', weight: 4 },
@@ -133,6 +160,102 @@ test('weekly count charts infer a bounded shift from declining to rising models,
     assert.match(svg, /class="flow-ribbon flow-inferred"[^>]*data-flow-pairs="\[\[&quot;model-a&quot;,&quot;model-b&quot;\]\]"[^>]*><title>Apparent shift:.*not a tracked switch/);
     assert.doesNotMatch(svg, /class="flow-ribbon flow-inferred"[^>]*model-b&quot;,&quot;model-a/);
     assert.equal((svg.match(/class="flow-entry-block"/g) ?? []).length, 2);
+});
+
+test('inferred shifts use the nearest edge above and below, without crossing either continuity ribbon', () => {
+    const data = [
+        { time: january + 86_400_000, to: 'old', weight: 10 },
+        { time: february + 86_400_000, to: 'old', weight: 6 },
+        { time: january + 86_400_000, to: 'new', weight: 2 },
+        { time: february + 86_400_000, to: 'new', weight: 6 },
+    ];
+    const downward = render(data, { order: ['old', 'new'], inferMigrations: true });
+    const down = ribbonEdges(downward, 'old', 'new');
+    assertNear(down.fromBottom, nodeEdges(downward, 'Jan 25', 'old').bottom);
+    assertNear(down.toTop, nodeEdges(downward, 'Feb 25', 'new').top);
+    assert.ok(down.fromTop >= continuityEdges(downward, 'old').fromBottom - 0.000001);
+    assert.ok(down.toBottom <= continuityEdges(downward, 'new').toTop + 0.000001);
+
+    const upward = render(data, { order: ['new', 'old'], inferMigrations: true });
+    const up = ribbonEdges(upward, 'old', 'new');
+    assertNear(up.fromTop, nodeEdges(upward, 'Jan 25', 'old').top);
+    assertNear(up.toBottom, nodeEdges(upward, 'Feb 25', 'new').bottom);
+    assert.ok(up.fromBottom <= continuityEdges(upward, 'old').fromTop + 0.000001);
+    assert.ok(up.toTop >= continuityEdges(upward, 'new').toBottom - 0.000001);
+});
+
+test('branches to models on both sides attach in vertical order around retained usage', () => {
+    const svg = render([
+        { time: january + 86_400_000, to: 'middle', weight: 10 },
+        { time: february + 86_400_000, to: 'middle', weight: 2 },
+        { time: february + 86_400_000, to: 'above', weight: 4 },
+        { time: february + 86_400_000, to: 'below', weight: 4 },
+    ], { order: ['above', 'middle', 'below'], inferMigrations: true });
+    const above = ribbonEdges(svg, 'middle', 'above');
+    const below = ribbonEdges(svg, 'middle', 'below');
+    const retained = continuityEdges(svg, 'middle');
+    assertNear(above.fromTop, nodeEdges(svg, 'Jan 25', 'middle').top);
+    assertNear(below.fromBottom, nodeEdges(svg, 'Jan 25', 'middle').bottom);
+    assert.ok(above.fromBottom <= retained.fromTop + 0.000001);
+    assert.ok(retained.fromBottom <= below.fromTop + 0.000001);
+    assertNear(above.toBottom, nodeEdges(svg, 'Feb 25', 'above').bottom);
+    assertNear(below.toTop, nodeEdges(svg, 'Feb 25', 'below').top);
+});
+
+test('incoming shifts from both sides leave room for the target model’s continuity', () => {
+    const svg = render([
+        { time: january + 86_400_000, to: 'above', weight: 4 },
+        { time: january + 86_400_000, to: 'middle', weight: 2 },
+        { time: january + 86_400_000, to: 'below', weight: 4 },
+        { time: february + 86_400_000, to: 'middle', weight: 10 },
+    ], { order: ['above', 'middle', 'below'], inferMigrations: true });
+    const above = ribbonEdges(svg, 'above', 'middle');
+    const below = ribbonEdges(svg, 'below', 'middle');
+    const retained = continuityEdges(svg, 'middle');
+    assertNear(above.toTop, nodeEdges(svg, 'Feb 25', 'middle').top);
+    assertNear(below.toBottom, nodeEdges(svg, 'Feb 25', 'middle').bottom);
+    assert.ok(above.toBottom <= retained.toTop + 0.000001);
+    assert.ok(retained.toBottom <= below.toTop + 0.000001);
+});
+
+test('multiple shifts on one side stack by the other model’s height, not by change size', () => {
+    const departing = render([
+        { time: january + 86_400_000, to: 'old', weight: 8 },
+        { time: february + 86_400_000, to: 'near', weight: 3 },
+        { time: february + 86_400_000, to: 'far', weight: 5 },
+    ], { order: ['old', 'near', 'far'], inferMigrations: true });
+    const near = ribbonEdges(departing, 'old', 'near');
+    const far = ribbonEdges(departing, 'old', 'far');
+    assertNear(near.fromTop, nodeEdges(departing, 'Jan 25', 'old').top);
+    assertNear(far.fromBottom, nodeEdges(departing, 'Jan 25', 'old').bottom);
+    assertNear(near.fromBottom, far.fromTop);
+
+    const arriving = render([
+        { time: january + 86_400_000, to: 'far', weight: 3 },
+        { time: january + 86_400_000, to: 'near', weight: 5 },
+        { time: february + 86_400_000, to: 'new', weight: 8 },
+    ], { order: ['far', 'near', 'new'], inferMigrations: true });
+    const upper = ribbonEdges(arriving, 'far', 'new');
+    const lower = ribbonEdges(arriving, 'near', 'new');
+    assertNear(upper.toTop, nodeEdges(arriving, 'Feb 25', 'new').top);
+    assertNear(lower.toBottom, nodeEdges(arriving, 'Feb 25', 'new').bottom);
+    assertNear(upper.toBottom, lower.toTop);
+});
+
+test('unmatched new uses stay between retained usage and a shift arriving from below', () => {
+    const svg = render([
+        { time: january + 86_400_000, to: 'new', weight: 2 },
+        { time: january + 86_400_000, to: 'old', weight: 4 },
+        { time: february + 86_400_000, to: 'new', weight: 8 },
+    ], { order: ['new', 'old'], inferMigrations: true });
+    const migration = ribbonEdges(svg, 'old', 'new');
+    const retained = continuityEdges(svg, 'new');
+    const entry = svg.match(/<path class="flow-ribbon flow-entry" d="([^"]+)"[^>]*><title>2 into new \(Feb 25\)/);
+    assert.ok(entry);
+    const coordinates = entry[1].match(/-?\d+(?:\.\d+)?/g).map(Number);
+    assertNear(retained.toBottom, coordinates[5]);
+    assertNear(coordinates[9], migration.toTop);
+    assertNear(migration.toBottom, nodeEdges(svg, 'Feb 25', 'new').bottom);
 });
 
 test('a new model receives only the unmatched increase as an entry, and losses never exceed gains', () => {

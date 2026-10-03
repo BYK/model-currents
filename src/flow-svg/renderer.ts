@@ -123,8 +123,8 @@ interface InferredMigration {
     readonly drop: number;
     readonly rise: number;
     readonly weight: number;
-    readonly sourceOffset: number;
-    readonly targetOffset: number;
+    sourceOffset: number;
+    targetOffset: number;
 }
 
 export const FLOW_PALETTE = [
@@ -369,6 +369,9 @@ export function renderFlowSvg(data: readonly FlowDatum[], options: FlowSvgOption
 
     const inferredMigrations: InferredMigration[] = [];
     const inferredIncoming = new Map<Node, Map<string, number>>();
+    const inferredOutgoing = new Map<Node, Map<string, number>>();
+    const incomingAbove = new Map<Node, Map<string, number>>();
+    const outgoingAbove = new Map<Node, Map<string, number>>();
     if (options.inferMigrations) {
         for (let index = 0; index < periods.length - 1; index += 1) {
             const before = new Map((nodeLists.get(periods[index].time) ?? [])
@@ -378,13 +381,11 @@ export function renderFlowSvg(data: readonly FlowDatum[], options: FlowSvgOption
             const declines = [...before].map(([key, { node, weight }]) => ({
                 key, node, drop: weight - (after.get(key)?.weight ?? 0),
                 remaining: weight - (after.get(key)?.weight ?? 0),
-                offset: Math.min(weight, after.get(key)?.weight ?? 0),
             })).filter(({ remaining }) => remaining > 0)
                 .sort((a, b) => b.drop - a.drop || a.key.localeCompare(b.key));
             const rises = [...after].map(([key, { node, weight }]) => ({
                 key, node, rise: weight - (before.get(key)?.weight ?? 0),
                 remaining: weight - (before.get(key)?.weight ?? 0),
-                offset: Math.min(weight, before.get(key)?.weight ?? 0),
             })).filter(({ remaining }) => remaining > 0)
                 .sort((a, b) => b.rise - a.rise || a.key.localeCompare(b.key));
             // Largest deltas first keeps the diagram legible. This is a visual pairing, not an identity match.
@@ -396,19 +397,62 @@ export function renderFlowSvg(data: readonly FlowDatum[], options: FlowSvgOption
                     inferredMigrations.push({
                         source: decline.node, target: rise.node, from: decline.key, to: rise.key,
                         drop: decline.drop, rise: rise.rise, weight,
-                        sourceOffset: decline.node.rawTops.get(decline.key)! + decline.offset * valueScale,
-                        targetOffset: rise.node.rawTops.get(rise.key)! + rise.offset * valueScale,
+                        sourceOffset: 0, targetOffset: 0,
                     });
                     decline.remaining -= weight;
                     rise.remaining -= weight;
-                    decline.offset += weight;
-                    rise.offset += weight;
                     const incoming = inferredIncoming.get(rise.node) ?? new Map<string, number>();
                     incoming.set(rise.key, (incoming.get(rise.key) ?? 0) + weight);
                     inferredIncoming.set(rise.node, incoming);
+                    const outgoing = inferredOutgoing.get(decline.node) ?? new Map<string, number>();
+                    outgoing.set(decline.key, (outgoing.get(decline.key) ?? 0) + weight);
+                    inferredOutgoing.set(decline.node, outgoing);
                 }
             }
         }
+
+        const rawCenter = (node: Node, key: string): number =>
+            node.rawTops.get(key)! + (node.rawEventWeights.get(key) ?? 0) * valueScale / 2;
+        const placeMigrations = (atSource: boolean, aboveWeights: Map<Node, Map<string, number>>): void => {
+            const grouped = new Map<Node, Map<string, InferredMigration[]>>();
+            for (const migration of inferredMigrations) {
+                const node = atSource ? migration.source : migration.target;
+                const key = atSource ? migration.from : migration.to;
+                const byKey = grouped.get(node) ?? new Map<string, InferredMigration[]>();
+                const group = byKey.get(key) ?? [];
+                group.push(migration);
+                byKey.set(key, group);
+                grouped.set(node, byKey);
+            }
+            for (const [node, byKey] of grouped) {
+                const aboveByKey = new Map<string, number>();
+                aboveWeights.set(node, aboveByKey);
+                for (const [key, group] of byKey) {
+                    const otherCenter = (migration: InferredMigration): number => atSource
+                        ? rawCenter(migration.target, migration.to) : rawCenter(migration.source, migration.from);
+                    const ordered = [...group].sort((a, b) => otherCenter(a) - otherCenter(b) ||
+                        (atSource ? a.to.localeCompare(b.to) : a.from.localeCompare(b.from)));
+                    const above = ordered.filter((migration) => otherCenter(migration) < rawCenter(node, key));
+                    const below = ordered.filter((migration) => otherCenter(migration) >= rawCenter(node, key));
+                    const aboveWeight = above.reduce((sum, migration) => sum + migration.weight, 0);
+                    const belowWeight = below.reduce((sum, migration) => sum + migration.weight, 0);
+                    aboveByKey.set(key, aboveWeight);
+                    const place = (migrations: readonly InferredMigration[], start: number): void => {
+                        const cursor = { value: start };
+                        for (const migration of migrations) {
+                            if (atSource) migration.sourceOffset = cursor.value;
+                            else migration.targetOffset = cursor.value;
+                            cursor.value += migration.weight * valueScale;
+                        }
+                    };
+                    // Keep the retained model in the middle; links to models above/below hug the respective edges.
+                    place(above, node.rawTops.get(key)!);
+                    place(below, node.rawTops.get(key)! + ((node.rawEventWeights.get(key) ?? 0) - belowWeight) * valueScale);
+                }
+            }
+        };
+        placeMigrations(true, outgoingAbove);
+        placeMigrations(false, incomingAbove);
     }
 
     const incomingByNode = new Map<Node, Link[]>();
@@ -595,10 +639,12 @@ export function renderFlowSvg(data: readonly FlowDatum[], options: FlowSvgOption
                 const x2 = xFor(following.bucket) - nodeWidth / 2;
                 const retained = Math.min(node.rawEventWeights.get(key) ?? 0, following.rawEventWeights.get(key) ?? 0);
                 const startY = options.inferMigrations
-                    ? node.rawTops.get(key)! + retained * valueScale / 2
+                    ? node.rawTops.get(key)! + ((outgoingAbove.get(node)?.get(key) ?? 0) +
+                        ((node.rawEventWeights.get(key) ?? 0) - retained - (inferredOutgoing.get(node)?.get(key) ?? 0)) / 2 +
+                        retained / 2) * valueScale
                     : node.continuityCenters.get(key) ?? node.y + node.height / 2;
                 const endY = options.inferMigrations
-                    ? following.rawTops.get(key)! + retained * valueScale / 2
+                    ? following.rawTops.get(key)! + ((incomingAbove.get(following)?.get(key) ?? 0) + retained / 2) * valueScale
                     : following.continuityCenters.get(key) ?? following.y + following.height / 2;
                 const control = Math.max(0, (x2 - x1) * 0.45);
                 const fromBand = options.inferMigrations ? retained * valueScale : Math.min(node.height, Math.max(1, fromWeight * valueScale));
@@ -677,7 +723,8 @@ export function renderFlowSvg(data: readonly FlowDatum[], options: FlowSvgOption
             if (absorbedEntryLinks.has(link)) continue;
             const backtailX = targetX - 38;
             const entryOffset = options.inferMigrations
-                ? link.target.rawTops.get(targetRawKey)! + (retained + incoming) * valueScale : link.targetOffset;
+                ? link.target.rawTops.get(targetRawKey)! + (retained + (incomingAbove.get(link.target)?.get(targetRawKey) ?? 0)) * valueScale
+                : link.targetOffset;
             const centerY = entryOffset + entryWeight * valueScale / 2;
             const streamHeight = entryWeight * valueScale;
             const clickPairs = escapeSvg(JSON.stringify([...link.pairs.values()]));
