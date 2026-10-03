@@ -58,7 +58,7 @@ test('personal OG image is a weighted, full-width weekly flow with safe labels a
     assert.match(svg, /class="flow-ribbon flow-entry"[^>]*fill="#5e7293"/);
     assert.match(svg, /&lt;&amp;&quot;&#39; model/);
     assert.doesNotMatch(svg, /<&"' model|<script|flow-transition/);
-    assert.match(svg, /weekly counts; no exact times or switches/i);
+    assert.match(svg, /weekly counts · crossed ribbons = inferred shifts, no tracked switches/i);
     assert.doesNotMatch(svg, /<rect x="80" y="\d+" width="\d+" height="17"/);
 });
 
@@ -69,7 +69,19 @@ test('a missing week never creates a continuity ribbon or an inferred switch', (
     ]));
     assert.match(svg, /7 Sept/);
     assert.match(svg, /21 Sept/);
-    assert.doesNotMatch(svg, /class="continuity-ribbon"|class="flow-ribbon flow-transition"/);
+    assert.doesNotMatch(svg, /class="continuity-ribbon"|class="flow-ribbon flow-inferred"/);
+});
+
+test('personal OG image shows an apparent shift, not an observed switch, between adjacent weeks', () => {
+    const svg = imageSvg(summarize('019ff796-7912-7786-a7bf-a964d071294a', [
+        { week: '2026-09-07', model: 'anthropic/old', count: 6 },
+        { week: '2026-09-14', model: 'anthropic/old', count: 2 },
+        { week: '2026-09-14', model: 'openai/new', count: 5 },
+    ]));
+    assert.match(svg, /class="flow-ribbon flow-inferred"[^>]*><title>Apparent shift:.*not a tracked switch/);
+    assert.match(svg, /class="flow-ribbon flow-entry"[^>]*><title>1 self-reported model uses of openai \/ new in 14 Sept/);
+    assert.match(svg, /inferred shifts/i);
+    assert.match(svg, /no tracked switches/i);
 });
 
 test('the community OG image retains its current card', () => {

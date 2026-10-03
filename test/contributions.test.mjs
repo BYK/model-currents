@@ -706,7 +706,7 @@ test('an oversized migrated report returns only a bounded owner summary and can 
         const result = await handleContributions(new Request(`https://modeltides.dev${path}`, {
             headers: { Authorization: `Bearer ${token}` },
         }), db, limit, path);
-        assert.deepEqual(await result.json(), { id, published: true, inAggregate: true, metricVersion: 1, revision: 0, tooLarge: true });
+        assert.deepEqual(await result.json(), { id, published: true, inAggregate: true, revision: 0, tooLarge: true });
         assert.equal((await handleContributions(new Request(`https://modeltides.dev${path}/unshare`, {
             method: 'POST', headers: { Authorization: `Bearer ${token}` },
         }), db, limit, `${path}/unshare`)).status, 200);

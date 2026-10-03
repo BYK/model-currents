@@ -86,6 +86,8 @@ test('a shared report renders an explorable flow chart from public weekly counts
         assert.match(items['chart-canvas'].innerHTML, /&lt;img src=x/);
         assert.match(items['report-status'].textContent, /9 active session-days/);
         assert.equal(items['donate-owner-form'].hidden, false);
+        assert.match(items['chart-canvas'].innerHTML, /class="flow-ribbon flow-inferred"/);
+        assert.match(items.app.innerHTML, /inferred shifts/i);
         assert.equal(items['timeline-controls'].hidden, false);
         assert.doesNotMatch(items.app.innerHTML, /href="\/local\/"/);
         assert.equal(new URL(items['share-x'].href).searchParams.get('url'), `https://modeltides.dev/u/${id}`);

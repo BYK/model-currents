@@ -38,6 +38,7 @@ export function renderWeeklyRows(
         time: Date.parse(`${week}T00:00:00Z`), to: model, weight: count,
     })), {
         start: first, end: last, width: 1100, height: 400,
+        weeklyBuckets: true, inferMigrations: source === 'mock' || source === 'gist',
         order: [...visible, ...(showAll ? [] : ['Other models'])],
         displayKey: (model) => visible.has(model) ? model : 'Other models',
         colorFor: getModelColor,
@@ -47,10 +48,12 @@ export function renderWeeklyRows(
         formatLinkTitle: ({ toLabel, toPeriod, value }) => `${toLabel} · ${toPeriod}\n${value.toLocaleString('en-GB')} ${example ? 'mock' : 'self-reported'} ${label}`,
         formatContinuityTitle: ({ label, fromPeriod, toPeriod }) => `${label}: appears in ${fromPeriod} and ${toPeriod}. This does not track people between periods.`,
         axisCaption: example ? 'EARLIER ← EXAMPLE MODEL COUNTS → LATER' : 'EARLIER ← REPORTED MODEL COUNTS → LATER',
-        ariaLabel: example ? 'Mock example of weekly model counts' : 'Self-reported model counts by week, grouped into wider periods over longer histories',
+        ariaLabel: example ? 'Mock example of weekly model counts with inferred shifts' : source === 'gist'
+            ? 'Self-reported gist counts by week with inferred shifts, grouped into wider periods over longer histories'
+            : 'Community model counts by week, grouped into wider periods over longer histories',
     });
-    chart.setAttribute('aria-label', example ? 'Mock example of weekly model counts' :
-        source === 'gist' ? 'Unlisted gist model counts over time' : source === 'legacy' ?
+    chart.setAttribute('aria-label', example ? 'Mock example of weekly model counts with inferred shifts' :
+        source === 'gist' ? 'Unlisted gist model counts with inferred shifts over time' : source === 'legacy' ?
             'Earlier shared model-use events over time' : 'Shared active session-days over time');
 }
 
@@ -76,7 +79,7 @@ export async function loadGlobalView(chart: HTMLElement, status: HTMLElement, ta
         const summary = `${total.toLocaleString('en-GB')} shared ${data.metricVersion === 2 ? 'active session-days' : 'earlier session starts and model switches'} · ${new Set(rows.map(({ week }) => week)).size} visible weeks`;
         status.textContent = showExample ? `${summary}${data.truncated ? ' · first 3,000 cells shown' : ''}` :
             `${summary}. ${data.truncated ? 'Only the first 3,000 eligible model-week cells are shown.' :
-                'Long date ranges group weeks into months; faint ribbons link recurring model names, not people.'}`;
+                'Long date ranges group weeks into months; faint ribbons link recurring names, not tracked people.'}`;
         if (table) {
             const tbody = document.createElement('tbody');
             for (const { week, model, count, contributors } of rows) {

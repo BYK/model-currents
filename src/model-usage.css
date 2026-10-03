@@ -167,6 +167,7 @@ h2 { margin-bottom: 0; font-family: 'Iosevka Etoile', serif; font-size: 22px; fo
 .legend-item { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .legend-line { width: 23px; height: 0; display: inline-block; border-top: 3px solid var(--teal); border-radius: 3px; box-shadow: 0 0 8px light-dark(#8cc6c5, #407f82); }
 .legend-continuity { width: 23px; height: 0; display: inline-block; border-top: 3px solid var(--teal); border-radius: 3px; opacity: 0.28; }
+.legend-migration { width: 23px; height: 0; display: inline-block; border-top: 3px solid var(--teal); border-radius: 3px; opacity: 0.62; transform: rotate(-20deg); }
 .legend-note { color: var(--faint); }
 .model-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; max-height: 112px; overflow: auto; padding: 0 25px 14px; scrollbar-color: var(--line) transparent; scrollbar-width: thin; }
 .model-legend-item { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 9px; white-space: nowrap; }
