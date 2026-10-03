@@ -1,4 +1,10 @@
 # Changelog
+## 1.2.0
+
+### Features
+
+- Add standalone CLI and restore shared charts by @BYK in [#14](https://github.com/BYK/model-tides/pull/14)
+
 ## 1.1.0
 
 ### Features
