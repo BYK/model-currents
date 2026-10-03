@@ -7,10 +7,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { brotliCompressSync } from 'node:zlib';
+import { scanHistory, scanOpenCode } from './history-scanner.mjs';
 import { parseUsageDocument, MAX_EVENTS, MAX_JSON_BYTES } from '../src/usage-data.ts';
 import { buildWeeklySnapshot, parseOwnedReport } from '../src/weekly-snapshot.ts';
 
-const scripts = new URL('.', import.meta.url);
 const api = 'https://modeltides.dev/api/contributions';
 const credential = join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'model-tides', 'contribution.json');
 
@@ -59,9 +59,9 @@ export function collectSources(home = homedir()) {
     const codex = join(home, '.codex');
     const claude = join(home, '.claude/projects');
     return [
-        ...(regular(opencode) ? [{ name: 'OpenCode', path: opencode, script: 'export-model-tides.py', args: [] }] : []),
-        ...(hasHistory(codex, 'codex') ? [{ name: 'Codex', path: codex, script: 'export-history.py', args: ['codex'] }] : []),
-        ...(hasHistory(claude, 'claude-code') ? [{ name: 'Claude Code', path: claude, script: 'export-history.py', args: ['claude-code'] }] : []),
+        ...(regular(opencode) ? [{ name: 'OpenCode', path: opencode }] : []),
+        ...(hasHistory(codex, 'codex') ? [{ name: 'Codex', path: codex }] : []),
+        ...(hasHistory(claude, 'claude-code') ? [{ name: 'Claude Code', path: claude }] : []),
     ];
 }
 
@@ -75,48 +75,46 @@ export function snapshotFromDocuments(documents) {
     })());
 }
 
-function documentsFromSources(sources, onProgress = () => {}) {
+async function documentsFromSources(sources, onProgress = () => {}) {
     const documents = [];
     for (const source of sources) {
         onProgress(`Scanning ${source.name} history…`);
-        const script = fileURLToPath(new URL(source.script, scripts));
-        const result = spawnSync('python3', [script, ...source.args, source.path], {
-            encoding: 'buffer', maxBuffer: MAX_JSON_BYTES + 1024, timeout: 120_000,
-        });
-        if (result.error || result.status !== 0) {
-            if (result.error?.code === 'ETIMEDOUT') throw new Error(`${source.name} scan timed out. Try exporting this harness separately.`);
-            if (result.error?.code === 'ENOENT') throw new Error('Python 3 is required to read local history.');
-            const reason = result.stderr?.toString('utf8').trim();
-            if (reason === 'No model observations found in this history.') {
-                onProgress(`${source.name} has no model observations; skipped.`);
-                continue;
+        let document;
+        try {
+            switch (source.name) {
+                case 'OpenCode': document = scanOpenCode(source.path); break;
+                case 'Codex': document = await scanHistory('codex', source.path); break;
+                case 'Claude Code': document = await scanHistory('claude-code', source.path); break;
+                default: throw new TypeError('Unsupported history source.');
             }
-            const fixedReasons = new Map([
-                ['Compressed Codex history requires zstd. Install it locally and retry.', 'Compressed Codex history requires zstd. Install it locally and retry.'],
-                ['A complete history record is malformed. Nothing was exported.', `${source.name} has a malformed history record. Nothing was exported.`],
-            ]);
-            if (fixedReasons.has(reason)) throw new Error(fixedReasons.get(reason));
-            throw new Error(`${source.name} could not be read. Check its local history and converter requirements.`);
+        } catch (error) {
+            if (error?.message === 'A complete history record is malformed.') {
+                throw new Error(`${source.name} has a malformed history record. Nothing was exported.`);
+            }
+            throw new Error(`${source.name} could not be read. Check its local history.`, { cause: error });
         }
-        const document = readMetadata(result.stdout);
-        if (!document.events.length) {
+        if (Buffer.byteLength(JSON.stringify(document)) > MAX_JSON_BYTES) {
+            throw new Error(`${source.name} metadata exceeds the export limit.`);
+        }
+        const parsed = parseUsageDocument(document);
+        if (!parsed.events.length) {
             onProgress(`${source.name} has no model observations; skipped.`);
             continue;
         }
-        documents.push(document);
+        documents.push(parsed);
         onProgress(`${source.name} scan complete.`);
     }
     return documents;
 }
 
-export function exportLocal(sources, onProgress) {
-    return snapshotFromDocuments(documentsFromSources(sources, onProgress));
+export async function exportLocal(sources, onProgress) {
+    return snapshotFromDocuments(await documentsFromSources(sources, onProgress));
 }
 
-export function exportLocalMetadata(sources, onProgress) {
-    const documents = documentsFromSources(sources, onProgress);
+export async function exportLocalMetadata(sources, onProgress) {
+    const documents = await documentsFromSources(sources, onProgress);
     const events = documents.flatMap(({ events }) => events);
-    if (events.length > MAX_EVENTS) throw new Error('Combined history exceeds the browser import limit. Export one harness at a time.');
+    if (events.length > MAX_EVENTS) throw new Error('Combined history exceeds the metadata export limit. Export one harness at a time.');
     const document = parseUsageDocument({
         format: 'model-tides', version: 1,
         source: documents.length === 1 ? documents[0].source : 'multiple',
@@ -264,7 +262,7 @@ Usage: model-tides <command> [options]
   unshare                      Hide your personal chart without deleting stored counts
   gist [--input metadata.json]  Create an unlisted GitHub gist of weekly counts (requires gh)
   link                         Print your personal chart URL
-  export [--output file.json]  Export private event metadata for local browser import
+  export [--output file.json]  Export private event metadata for offline use
   upload --rotate              Rotate your private replacement key
   upload --delete              Delete your stored report and its aggregate counts
   help                         Show this help
@@ -318,12 +316,12 @@ async function main() {
         }
         const sources = collectSources();
         if (!sources.length) throw new Error('No supported harness history was found.');
-        const document = exportLocalMetadata(sources, console.log);
+        const document = await exportLocalMetadata(sources, console.log);
         const bytes = Buffer.from(JSON.stringify(document) + '\n');
-        if (bytes.length > MAX_JSON_BYTES) throw new Error('Combined metadata exceeds the browser import limit. Export one harness at a time.');
+        if (bytes.length > MAX_JSON_BYTES) throw new Error('Combined metadata exceeds the export limit. Export one harness at a time.');
         const output = args[2] ?? 'model-tides.json';
         writeFileSync(output, bytes, { mode: 0o600, flag: 'wx' });
-        console.log(`Saved ${document.events.length} model events to ${output}. Open it at https://modeltides.dev/local/. This file contains exact event timestamps; keep it private.`);
+        console.log(`Saved ${document.events.length} model events to ${output}. Use --input to review weekly counts locally before sharing. This file contains exact event timestamps; keep it private.`);
         return;
     }
     if (args[0] === 'gist') {
@@ -334,7 +332,7 @@ async function main() {
         if (input && !regular(input)) throw new Error('Input must be a regular metadata JSON file.');
         const sources = input ? [] : collectSources();
         if (!input && !sources.length) throw new Error('No supported harness history was found. Use --input for an existing metadata JSON.');
-        const snapshot = input ? snapshotFromDocuments([readMetadata(readFileSync(input))]) : exportLocal(sources, console.log);
+        const snapshot = input ? snapshotFromDocuments([readMetadata(readFileSync(input))]) : await exportLocal(sources, console.log);
         await createGist(snapshot);
         return;
     }
@@ -418,7 +416,7 @@ async function main() {
     if (option === '--input' && !regular(sources[0].path)) throw new Error('Input must be a regular metadata JSON file.');
     const snapshot = option === '--input'
         ? snapshotFromDocuments([readMetadata(readFileSync(sources[0].path))])
-        : exportLocal(sources, console.log);
+        : await exportLocal(sources, console.log);
     console.log(`Checked ${sources.map(({ name }) => name).join(', ')}. The following weekly counts would be uploaded:`);
     preview(snapshot);
     console.log('Only the displayed weeks, model names, and counts are uploaded. No prompts, replies, paths, exact times, or session IDs.');

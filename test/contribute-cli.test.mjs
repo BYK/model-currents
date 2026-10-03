@@ -339,7 +339,7 @@ test('link prints only the existing public URL without scanning history or makin
     } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
-test('CLI export combines local metadata for browser import without contacting the site or overwriting a file', () => {
+test('CLI export combines private metadata without contacting the site or overwriting a file', () => {
     const home = mkdtempSync(join(tmpdir(), 'model-tides-export-'));
     try {
         const codex = join(home, '.codex/sessions/2025/01/01');
@@ -371,7 +371,7 @@ test('CLI export combines local metadata for browser import without contacting t
         ] });
         assert.doesNotMatch(bytes, /private|sessionId|message|content|cwd|instructions|path|prompt|reply/i);
         assert.equal(statSync(path).mode & 0o777, 0o600);
-        assert.match(result.stdout, /modeltides\.dev\/local\//);
+        assert.match(result.stdout, /Use --input to review weekly counts locally before sharing/);
         assert.match(result.stdout, /exact event timestamps/i);
 
         const repeated = run(path);
@@ -387,7 +387,7 @@ test('CLI export combines local metadata for browser import without contacting t
     }
 });
 
-test('Codex scanning reports progress and a sanitized malformed-record reason', () => {
+test('Codex scanning reports progress and a sanitized malformed-record reason', async () => {
     const home = mkdtempSync(join(tmpdir(), 'model-tides-malformed-'));
     try {
         const file = join(home, 'rollout-bad.jsonl');
@@ -396,13 +396,13 @@ test('Codex scanning reports progress and a sanitized malformed-record reason', 
             '{"private transcript":',
         ].join('\n') + '\n');
         const progress = [];
-        assert.throws(() => exportLocal([{ name: 'Codex', path: file, script: 'export-history.py', args: ['codex'] }],
+        await assert.rejects(exportLocal([{ name: 'Codex', path: file }],
             (message) => progress.push(message)), /Codex.*malformed.*record/i);
         assert.deepEqual(progress, ['Scanning Codex history…']);
     } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
-test('a detected history with no model observations is reported and skipped without losing other sources', () => {
+test('a detected history with no model observations is reported and skipped without losing other sources', async () => {
     const home = mkdtempSync(join(tmpdir(), 'model-tides-no-models-'));
     try {
         const codex = join(home, 'rollout-empty.jsonl');
@@ -414,9 +414,9 @@ test('a detected history with no model observations is reported and skipped with
             timestamp: '2025-01-01T00:00:01Z', type: 'assistant', message: { role: 'assistant', model: 'claude-sonnet-4-5', content: 'private reply' },
         }) + '\n');
         const progress = [];
-        const result = exportLocal([
-            { name: 'Codex', path: codex, script: 'export-history.py', args: ['codex'] },
-            { name: 'Claude Code', path: claude, script: 'export-history.py', args: ['claude-code'] },
+        const result = await exportLocal([
+            { name: 'Codex', path: codex },
+            { name: 'Claude Code', path: claude },
         ], (message) => progress.push(message));
         assert.deepEqual(result.weeks, [{ week: '2024-12-30', models: { 'anthropic/claude-sonnet-4-5': 1 } }]);
         assert.deepEqual(progress, [

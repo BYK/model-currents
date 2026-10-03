@@ -22,29 +22,21 @@ root.innerHTML = `
             <h2 id="gist-heading">Model use over time</h2>
             <p id="gist-status" class="global-status" role="status" aria-live="polite">Loading weekly counts from GitHub…</p>
             <div id="gist-chart" class="global-chart" role="img" aria-label="Unlisted gist model counts over time"></div>
-            <details id="gist-details" class="global-details" hidden>
-                <summary>View exact weekly counts</summary>
-                <div class="global-table-scroll"><table><thead><tr><th>Week</th><th>Model</th><th>Count</th></tr></thead><tbody id="gist-table"></tbody></table></div>
-            </details>
             <p class="global-note">Your browser reads this unlisted gist directly from GitHub. Model Tides never receives its file contents. Anyone with the link can read the counts, and GitHub retains revisions.</p>
         </section>
-        <footer class="home-footer"><a id="gist-source" href="https://gist.github.com/" target="_blank" rel="noopener noreferrer">View gist on GitHub ↗</a> · <a href="/local/">Open your private timeline</a></footer>
+        <footer class="home-footer"><a id="gist-source" href="https://gist.github.com/" target="_blank" rel="noopener noreferrer">View gist on GitHub ↗</a> · <a href="/">Model Tides home</a></footer>
     </main>
 `;
 
 setupTheme(root);
 const status = root.querySelector<HTMLElement>('#gist-status')!;
 const chart = root.querySelector<HTMLElement>('#gist-chart')!;
-const details = root.querySelector<HTMLDetailsElement>('#gist-details')!;
-const table = root.querySelector<HTMLTableSectionElement>('#gist-table')!;
 const source = root.querySelector<HTMLAnchorElement>('#gist-source')!;
 const current = { version: 0 };
 
 function showGist(): void {
     const version = ++current.version;
     chart.replaceChildren();
-    table.replaceChildren();
-    details.hidden = true;
     const match = /^#([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)\/([0-9a-f]{32})$/.exec(window.location.hash);
     if (!match) {
         status.textContent = 'Invalid gist address.';
@@ -65,18 +57,6 @@ function showGist(): void {
         renderWeeklyRows(chart, rows, 'gist');
         const total = rows.reduce((sum, row) => sum + row.count, 0);
         status.textContent = `${total.toLocaleString('en-GB')} self-reported model uses across ${snapshot.weeks.length} weeks · unlisted gist by ${currentOwner}`;
-        const body = document.createDocumentFragment();
-        for (const { week, model, count } of rows) {
-            const tr = document.createElement('tr');
-            for (const value of [week, model, count.toLocaleString('en-GB')]) {
-                const cell = document.createElement('td');
-                cell.textContent = value;
-                tr.append(cell);
-            }
-            body.append(tr);
-        }
-        table.replaceChildren(body);
-        details.hidden = false;
     }).catch(() => {
         if (version === current.version) {
             status.textContent = 'Could not load this weekly-count gist from GitHub. Check the link and connection.';

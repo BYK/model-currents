@@ -54,7 +54,7 @@ test('Codex rollouts count session starts and turn-context model changes once, n
     }
 });
 
-test('Codex converter skips model IDs that exceed the browser UTF-16 limit', () => {
+test('Codex converter skips model IDs that exceed the metadata UTF-16 limit', () => {
     const directory = mkdtempSync(join(tmpdir(), 'tides-unicode-'));
     try {
         const file = join(directory, 'rollout-unicode.jsonl');

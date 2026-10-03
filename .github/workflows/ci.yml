@@ -28,3 +28,55 @@ jobs:
                   name: npm-tarball
                   path: model-tides-*.tgz
                   if-no-files-found: error
+
+    binaries:
+        name: Build binary (${{ matrix.family }})
+        runs-on: ${{ matrix.runner }}
+        strategy:
+            matrix:
+                include:
+                    - family: linux
+                      runner: ubuntu-latest
+                      targets: linux-x64 linux-arm64
+                    - family: macos
+                      runner: macos-latest
+                      targets: darwin-x64 darwin-arm64
+        steps:
+            - uses: actions/checkout@v6
+            - uses: actions/setup-node@v6
+              with:
+                  node-version: 24
+                  package-manager-cache: false
+            - run: npm ci
+            - run: npm run build:standalone -- ${{ matrix.targets }}
+            - name: Check standalone history reading without private data
+              run: node scripts/verify-standalone.mjs "dist-bin/model-tides-${{ matrix.family }}-$(node -p 'process.arch')"
+            - uses: actions/upload-artifact@v4
+              with:
+                  name: binaries-${{ matrix.family }}
+                  path: dist-bin/model-tides-${{ matrix.family }}-*
+                  if-no-files-found: error
+
+    standalone:
+        name: Build standalone
+        needs: [pack, binaries]
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/download-artifact@v4
+              with:
+                  pattern: binaries-*
+                  merge-multiple: true
+                  path: dist-bin
+            - name: Check and hash all standalone binaries
+              working-directory: dist-bin
+              run: |
+                  test -f model-tides-linux-x64
+                  test -f model-tides-linux-arm64
+                  test -f model-tides-darwin-x64
+                  test -f model-tides-darwin-arm64
+                  sha256sum model-tides-* > SHA256SUMS
+            - uses: actions/upload-artifact@v4
+              with:
+                  name: standalone
+                  path: dist-bin/*
+                  if-no-files-found: error

@@ -1,4 +1,10 @@
 import type { Database } from './contributions';
+import { renderFlowSvg } from '../src/flow-svg/renderer.ts';
+import { getModelColor, OTHER_MODEL_COLOR } from '../src/model-colors.ts';
+
+const DAY = 86_400_000;
+const WEEK = 7 * DAY;
+const MAX_VISIBLE_MODELS = 6;
 
 export interface CountRow {
     readonly week: string;
@@ -41,20 +47,75 @@ export function escapeHtml(text: string | number): string {
 }
 
 export function pageForReport(report: PublicReport, origin: string, shell: string): Response {
-    const title = `${report.total.toLocaleString('en-GB')} model uses over ${report.weeks} ${report.weeks === 1 ? 'week' : 'weeks'} · Model Tides`;
-    const description = 'A public, self-reported weekly model snapshot. Counts are observed session starts and model changes, not turns or tokens.';
+    const title = `Your model tide · ${report.total.toLocaleString('en-GB')} model uses over ${report.weeks} ${report.weeks === 1 ? 'week' : 'weeks'} · Model Tides`;
+    const description = 'A public flow chart of self-reported weekly model counts; no exact times or model switches are shared.';
     const url = `${origin}/u/${report.id}`;
     const image = `${origin}/og/${report.id}.png`;
     if (!shell.includes('</head>') || !shell.includes('id="app"')) throw new Error('Missing report app shell.');
     const meta = `<meta property="og:type" content="website"><meta property="og:title" content="${escapeHtml(title)}">
-<meta property="og:description" content="${escapeHtml(description)}"><meta property="og:url" content="${url}">
-<meta property="og:image" content="${image}"><meta name="twitter:card" content="summary_large_image">`;
+<meta property="og:description" content="${escapeHtml(description)}"><meta property="og:url" content="${escapeHtml(url)}">
+<meta property="og:image" content="${escapeHtml(image)}"><meta property="og:image:alt" content="${escapeHtml(description)}"><meta name="twitter:card" content="summary_large_image">`;
     const html = shell.replace(/<title>[^<]*<\/title>/, `<title>${escapeHtml(title)}</title>`)
         .replace('</head>', `${meta}</head>`);
     return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
 }
 
+function personalImageSvg(report: PublicReport): string {
+    const rows = report.counts.map(({ week, model, count }) => ({ time: Date.parse(`${week}T00:00:00Z`), model, count }));
+    if (!rows.length || rows.some(({ time }) => !Number.isFinite(time))) throw new RangeError('Invalid report weeks.');
+    const first = Math.min(...rows.map(({ time }) => time));
+    const last = Math.max(...rows.map(({ time }) => time));
+    // The renderer uses daily buckets for short ranges. Map each week to one
+    // adjacent chart period so recurring models still get continuity ribbons.
+    // Axis labels use the original week dates; these are not event timestamps.
+    const compactWeeks = last > first && last - first <= 35 * DAY;
+    const chartTime = (time: number): number => compactWeeks ? first + (time - first) / WEEK * DAY : time;
+    const realTime = (time: number): number => compactWeeks ? first + (time - first) / DAY * WEEK : time;
+    const visible = report.models.slice(0, MAX_VISIBLE_MODELS).map(({ model }) => model);
+    if (report.models.length > MAX_VISIBLE_MODELS) visible.push('Other models');
+    const visibleSet = new Set(visible);
+    const formatCount = (value: number): string => value.toLocaleString('en-GB');
+    const chart = renderFlowSvg(rows.map(({ time, model, count }) => ({ time: chartTime(time), to: model, weight: count })), {
+        start: chartTime(first), end: chartTime(last), width: 1080, height: 350,
+        order: visible, displayKey: (model) => visibleSet.has(model) ? model : 'Other models',
+        displayName: (model) => model === 'Other models' ? model : model.replace('/', ' / '),
+        colorFor: (model) => model === 'Other models' ? OTHER_MODEL_COLOR : getModelColor(model),
+        streamColorFor: (model) => getModelColor(model), formatValue: formatCount,
+        formatPeriod: (time, intervalDays) => new Date(realTime(time)).toLocaleDateString('en-GB', intervalDays === 30
+            ? { month: 'short', year: '2-digit', timeZone: 'UTC' }
+            : { day: 'numeric', month: 'short', timeZone: 'UTC' }),
+        formatNodeTitle: ({ period, label, value }) => `${period} · ${label} · ${formatCount(value)} self-reported model uses`,
+        formatLinkTitle: ({ toLabel, toPeriod, value }) => `${formatCount(value)} self-reported uses of ${toLabel} in ${toPeriod}`,
+        formatContinuityTitle: ({ label, fromPeriod, toPeriod }) =>
+            `Visual continuity: ${label} has reported uses in ${fromPeriod} and ${toPeriod}. Weekly counts do not track sessions between periods.`,
+        axisCaption: 'EARLIER ← WEEK → LATER', ariaLabel: 'Your self-reported model tide over time',
+    }).replace('<svg ', '<svg x="60" y="166" ');
+    const legend = visible.map((model, index) => {
+        const x = 70 + (index % 4) * 275;
+        const y = 544 + Math.floor(index / 4) * 27;
+        const label = model === 'Other models' ? model : model.replace('/', ' / ');
+        const shortLabel = [...label].length > 23 ? `${[...label].slice(0, 22).join('')}…` : label;
+        const color = model === 'Other models' ? OTHER_MODEL_COLOR : getModelColor(model);
+        return `<rect x="${x}" y="${y - 12}" width="12" height="12" rx="2" fill="${color}"/><text x="${x + 20}" y="${y}" fill="#eaf7f6" font-size="15">${escapeHtml(shortLabel)}</text>`;
+    }).join('');
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="Your model tide: ${formatCount(report.total)} self-reported model uses over ${report.weeks} weeks">
+<title>Your model tide</title><desc>Self-reported weekly model counts over time. Faint ribbons show recurring model names, not tracked sessions or switches.</desc>
+<style>.flow-svg { font-family: 'Noto Sans Mono', monospace; }
+.flow-svg .chart-gridline { stroke: #31515a; stroke-width: 1; stroke-dasharray: 2 6; }
+.flow-svg .date-axis, .flow-svg .date-tick { stroke: #647e86; stroke-width: 1; }
+.flow-svg .date-label { fill: #adc6c9; font-size: 13px; }
+.flow-svg .axis-caption { fill: #adc6c9; font-size: 11px; letter-spacing: 1px; }
+.flow-svg .usage-node { stroke: #d4e9e5; stroke-width: .7; }</style>
+<rect width="1200" height="630" fill="#102832"/><path d="M0 48Q300 10 600 48T1200 48" fill="none" stroke="#2b6e76" stroke-width="2"/>
+<g font-family="Noto Sans Mono, monospace"><text x="60" y="37" fill="#82d6ca" font-size="17" letter-spacing="3">MODEL TIDES · SHARED MODEL HISTORY</text>
+<text x="60" y="94" fill="#eaf7f6" font-size="48">Your model tide</text>
+<text x="60" y="132" fill="#adc6c9" font-size="19">${formatCount(report.total)} model uses · ${report.weeks} ${report.weeks === 1 ? 'week' : 'weeks'} · self-reported weekly counts</text></g>
+${chart}<g font-family="Noto Sans Mono, monospace">${legend}
+<text x="60" y="607" fill="#adc6c9" font-size="15">Weekly counts; no exact times or switches · faint ribbons show visual continuity</text></g></svg>`;
+}
+
 export function imageSvg(report: PublicReport): string {
+    if (report.id !== null) return personalImageSvg(report);
     const bars = report.models.slice(0, 5).map(({ model, count }, index) => {
         const y = 322 + index * 60;
         const width = Math.max(6, Math.round(580 * count / Math.max(1, report.models[0].count)));

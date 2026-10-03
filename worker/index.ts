@@ -19,7 +19,7 @@ async function home(request: Request, env: Env): Promise<Response> {
         const aggregate = await getAggregate(env.DB);
         const total = aggregate.weeks.reduce((sum, row) => sum + row.count, 0);
         const title = total ? `${total.toLocaleString('en-GB')} shared model uses · Model Tides` : 'Model Tides — Your models, over time.';
-        const description = 'See model use over time. Explore shared weekly counts, or review your own history and choose whether to share.';
+        const description = 'Explore shared weekly model counts and learn how to share your own.';
         const origin = new URL(request.url).origin;
         const meta = `<meta property="og:type" content="website"><meta property="og:title" content="${escapeHtml(title)}">
 <meta property="og:description" content="${escapeHtml(description)}"><meta property="og:url" content="${origin}/">
@@ -85,7 +85,10 @@ export default {
             return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
         }
 
-        if (url.pathname === '/local' || url.pathname === '/local/' || url.pathname === '/gist' || url.pathname === '/gist/') {
+        if (url.pathname === '/local' || url.pathname === '/local/') {
+            return new Response(null, { status: 308, headers: { Location: `${url.origin}/`, 'Cache-Control': 'no-store' } });
+        }
+        if (url.pathname === '/gist' || url.pathname === '/gist/') {
             return env.ASSETS.fetch(new Request(new URL('/', url), request));
         }
         return url.pathname === '/' && request.method === 'GET' ? home(request, env) : env.ASSETS.fetch(request);

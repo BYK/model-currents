@@ -1,15 +1,18 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createWriteStream, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
+import { createZstdCompress } from 'node:zlib';
 import test from 'node:test';
 import { parseUsageDocument } from '../src/usage-data.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
-test('npm package includes the local converters, metadata validator, and command, without the app or Worker', () => {
+test('npm package includes only the Node scanner, metadata validator, and command, without Python or the app', async () => {
     const app = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
     const cli = JSON.parse(readFileSync(join(root, 'cli/package.json'), 'utf8'));
     assert.equal(app.private, true, 'never publish the site source as the CLI');
@@ -20,7 +23,7 @@ test('npm package includes the local converters, metadata validator, and command
     const names = packageInfo.files.map((file) => file.path).sort();
     assert.deepEqual(names, [
         'LICENSE', 'README.md',
-        'dist/scripts/contribute.mjs', 'dist/scripts/export-history.py', 'dist/scripts/export-model-tides.py',
+        'dist/scripts/contribute.mjs', 'dist/scripts/history-scanner.mjs',
         'dist/src/usage-data.js', 'dist/src/weekly-snapshot.js', 'package.json',
     ]);
     assert.equal(packageInfo.name, 'model-tides');
@@ -107,11 +110,19 @@ test('npm package includes the local converters, metadata validator, and command
         const saved = execFileSync('node', [bin, 'export', '--output', exportPath], {
             cwd: directory, encoding: 'utf8', env: { ...process.env, HOME: directory, XDG_CONFIG_HOME: directory },
         });
-        assert.match(saved, /modeltides\.dev\/local\//);
+        assert.match(saved, /Use --input to review weekly counts locally before sharing/);
         const exported = readFileSync(exportPath, 'utf8');
         assert.deepEqual(parseUsageDocument(JSON.parse(exported)).events, [
             { time: Date.UTC(2025, 0, 1), model: 'openai/gpt-5', kind: 'session' },
         ]);
         assert.doesNotMatch(exported, /private|prompt|content|session_meta/i);
+        const plain = join(history, 'rollout-test.jsonl');
+        await pipeline(Readable.from([readFileSync(plain)]), createZstdCompress(), createWriteStream(`${plain}.zst`));
+        rmSync(plain);
+        const compressedExport = join(directory, 'compressed.json');
+        execFileSync(process.execPath, [bin, 'export', '--output', compressedExport], {
+            cwd: directory, encoding: 'utf8', env: { ...environment, PATH: '' },
+        });
+        assert.deepEqual(JSON.parse(readFileSync(compressedExport, 'utf8')).events, JSON.parse(exported).events);
     } finally { rmSync(directory, { recursive: true, force: true }); }
 });

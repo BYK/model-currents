@@ -18,16 +18,27 @@ root.innerHTML = `
 
         <div class="home-intro"><h1>Your models, over time<span class="title-wave" aria-hidden="true"> ~</span></h1></div>
 
-        <section class="home-cta" aria-labelledby="home-cta-heading">
-            <h2 id="home-cta-heading">See and share your own model history</h2>
-            <a class="command-strip" href="/local/">Explore and publish a personal chart in your browser →</a>
-        </section>
-
         <section class="global-card home-graph" aria-labelledby="global-heading">
             <h2 id="global-heading">Community model tides</h2>
             <p id="global-status" class="global-status" role="status" aria-live="polite">Loading shared model counts…</p>
             <div id="global-chart" class="global-chart" role="img" aria-label="Shared model counts over time"></div>
             <p class="global-note">Self-reported counts · each model and week needs five contributors to appear.</p>
+        </section>
+
+        <section class="home-cta" aria-labelledby="home-cta-heading">
+            <h2 id="home-cta-heading">Share your weekly model counts</h2>
+            <div class="command-strip">
+                <label class="visually-hidden" for="command-manager">Choose a package manager</label>
+                <select class="command-kind" id="command-manager" aria-label="Choose a package manager">
+                    <option value="npx">npx</option>
+                    <option value="pnpx">pnpx</option>
+                    <option value="yarn">yarn dlx</option>
+                </select>
+                <code id="upload-command">npx model-tides@latest upload</code>
+                <button class="copy-command" id="copy-command" type="button" aria-label="Copy upload command" title="Copy upload command"><svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></button>
+            </div>
+            <p class="command-help">Review counts locally, then choose a personal link or an unlisted gist.</p>
+            <p class="visually-hidden" id="command-status" role="status" aria-live="polite"></p>
         </section>
 
         <footer class="home-footer"><a href="https://github.com/BYK/model-tides" target="_blank" rel="noopener noreferrer">see the code ↗</a></footer>
@@ -37,5 +48,27 @@ root.innerHTML = `
 const chart = root.querySelector<HTMLElement>('#global-chart')!;
 const status = root.querySelector<HTMLElement>('#global-status')!;
 void loadGlobalView(chart, status, null, true);
+
+const commands = {
+    npx: 'npx model-tides@latest upload',
+    pnpx: 'pnpx model-tides@latest upload',
+    yarn: 'yarn dlx model-tides@latest upload',
+} as const;
+const manager = root.querySelector<HTMLSelectElement>('#command-manager')!;
+const commandText = root.querySelector<HTMLElement>('#upload-command')!;
+const commandStatus = root.querySelector<HTMLElement>('#command-status')!;
+manager.addEventListener('change', () => {
+    if (!(manager.value in commands)) throw new RangeError('Unknown package manager.');
+    commandText.textContent = commands[manager.value as keyof typeof commands];
+    commandStatus.textContent = '';
+});
+root.querySelector<HTMLButtonElement>('#copy-command')!.addEventListener('click', async () => {
+    try {
+        await navigator.clipboard.writeText(commandText.textContent ?? '');
+        commandStatus.textContent = 'Upload command copied.';
+    } catch {
+        commandStatus.textContent = 'Copy failed. Select the command to copy it.';
+    }
+});
 
 setupTheme(root);

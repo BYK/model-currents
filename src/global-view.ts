@@ -64,7 +64,7 @@ export async function loadGlobalView(chart: HTMLElement, status: HTMLElement, ta
         if (rows.length === 0) {
             status.textContent = showExample
                 ? 'Mock data · public counts appear after five contributors share a model and week.'
-                : 'No weekly model has five contributors yet. Your local history still works without sharing.';
+                : 'No weekly model has five contributors yet.';
             if (showExample) renderWeeklyRows(chart, exampleRows, 'mock');
             else chart.replaceChildren();
             table?.replaceChildren();
@@ -91,7 +91,7 @@ export async function loadGlobalView(chart: HTMLElement, status: HTMLElement, ta
         }
     } catch {
         status.textContent = showExample ? 'Shared counts are unavailable. This chart uses mock data.'
-            : 'The shared timeline is unavailable. Your local history still works.';
+            : 'The shared timeline is unavailable.';
         if (showExample) renderWeeklyRows(chart, exampleRows, 'mock');
     }
 }

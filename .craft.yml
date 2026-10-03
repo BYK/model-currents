@@ -9,15 +9,18 @@ statusProvider:
     config:
         contexts:
             - Build
+            - Build standalone
 artifactProvider:
     name: github
     config:
         artifacts:
-            CI: npm-tarball
+            CI:
+                - npm-tarball
+                - standalone
 targets:
     - name: npm
       access: public
       oidc: true
       includeNames: /^model-tides-\d.*\.tgz$/
     - name: github
-      includeNames: /^model-tides-\d.*\.tgz$/
+      includeNames: /^(model-tides-\d.*\.tgz|model-tides-(linux|darwin)-(x64|arm64)|SHA256SUMS)$/
