@@ -1,4 +1,15 @@
 # Changelog
+## 1.2.1
+
+### Fixes
+
+- Fix standalone PATH invocation by @BYK in [#18](https://github.com/BYK/model-tides/pull/18)
+- Match macOS binary artifact paths by @BYK in [#16](https://github.com/BYK/model-tides/pull/16)
+
+### Other Changes
+
+- Show verified standalone installer on homepage by @BYK in [#17](https://github.com/BYK/model-tides/pull/17)
+
 ## 1.2.0
 
 ### Features
