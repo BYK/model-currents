@@ -18,7 +18,7 @@ async function home(request: Request, env: Env): Promise<Response> {
     try {
         const aggregate = await getAggregate(env.DB);
         const total = aggregate.weeks.reduce((sum, row) => sum + row.count, 0);
-        const title = total ? `${total.toLocaleString('en-GB')} shared model uses · Model Tides` : 'Model Tides — Your models, over time.';
+        const title = total ? `${total.toLocaleString('en-GB')} shared ${aggregate.metricVersion === 2 ? 'active session-days' : 'model uses'} · Model Tides` : 'Model Tides — Your models, over time.';
         const description = 'Explore shared weekly model counts and learn how to share your own.';
         const origin = new URL(request.url).origin;
         const meta = `<meta property="og:type" content="website"><meta property="og:title" content="${escapeHtml(title)}">
@@ -60,7 +60,8 @@ export default {
                 if (!env.DB) return new Response('Service unavailable', { status: 503, headers: { 'Cache-Control': 'no-store' } });
                 try {
                     const report = globalImage
-                        ? summarize(null, (await getAggregate(env.DB)).weeks)
+                        ? await (async () => { const aggregate = await getAggregate(env.DB);
+                            return summarize(null, aggregate.weeks, aggregate.metricVersion); })()
                         : await getReport(env.DB, id!);
                     if (!report) return new Response('Not found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
                     if (publicPath.test(url.pathname)) {

@@ -62,7 +62,7 @@ test('a failed GitHub fetch does not leak its response body or error text', asyn
     }), (error) => error.message === 'Could not load a valid weekly-count gist.');
 });
 
-test('complete gist and mock counts show inferred shifts, but filtered community counts do not', async () => {
+test('gist and mock counts show inferred shifts, but legacy and active-day community counts do not', async () => {
     const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
     try {
         const { renderWeeklyRows } = await server.ssrLoadModule('/src/global-view.ts');
@@ -72,6 +72,8 @@ test('complete gist and mock counts show inferred shifts, but filtered community
         ];
         const chart = { innerHTML: '', setAttribute() {} };
         renderWeeklyRows(chart, rows, 'shared');
+        assert.doesNotMatch(chart.innerHTML, /flow-inferred/);
+        renderWeeklyRows(chart, rows, 'legacy');
         assert.doesNotMatch(chart.innerHTML, /flow-inferred/);
         renderWeeklyRows(chart, rows, 'gist');
         assert.match(chart.innerHTML, /class="flow-ribbon flow-inferred"/);
@@ -94,7 +96,10 @@ test('the browser renders a gist without sending its contents to Model Tides or 
             setAttribute() {},
             addEventListener(type, handler) { this.handlers.set(type, handler); },
         });
-        const items = Object.fromEntries(['app', 'theme-toggle', 'gist-status', 'gist-chart', 'gist-source'].map((name) => [name, element()]));
+        const items = Object.fromEntries(['app', 'theme-toggle', 'gist-status', 'gist-chart', 'gist-source',
+            'gist-donate', 'gist-donate-consent', 'gist-donate-submit', 'gist-donate-status',
+            'gist-donate-result', 'gist-donate-counts', 'gist-personal-link', 'gist-key-download',
+            'gist-legacy-note'].map((name) => [name, element()]));
         items.app.querySelector = (selector) => items[selector.slice(1)];
         globalThis.document = {
             documentElement: { dataset: {} },
@@ -111,9 +116,10 @@ test('the browser renders a gist without sending its contents to Model Tides or 
             history: { replaceState(_state, _title, url) { history.push(url); } },
         };
         const calls = [];
+        const fixture = { version: 1 };
         globalThis.fetch = async (url) => {
             calls.push(url);
-            return Response.json({ ...gist(JSON.stringify({ ...snapshot, weeks: [
+            return Response.json({ ...gist(JSON.stringify({ ...snapshot, version: fixture.version, weeks: [
                 { week: '2026-09-28', models: { '<img src=x onerror=alert(1)>': 1 } },
             ] })), owner: { login: 'NewOwner' } });
         };
@@ -123,10 +129,27 @@ test('the browser renders a gist without sending its contents to Model Tides or 
         assert.doesNotMatch(items.app.innerHTML, /View exact weekly counts|<table/);
         assert.doesNotMatch(items.app.innerHTML + items['gist-chart'].innerHTML, /<img src=x/);
         assert.match(items['gist-chart'].innerHTML, /&lt;img src=x/);
-        assert.match(items['gist-status'].textContent, /1 self-reported model uses/);
+        assert.match(items['gist-status'].textContent, /1 self-reported earlier model-use events/);
+        assert.match(items['gist-status'].textContent, /across 1 week ·/);
+        assert.equal(items['gist-donate'].hidden, true, 'v1 counts cannot be rebranded as active session-days');
+        assert.equal(items['gist-legacy-note'].hidden, false);
         assert.match(items['gist-status'].textContent, /NewOwner/);
         assert.deepEqual(history, [`/gist#NewOwner/${id}`]);
         assert.equal(items['gist-source'].href, `https://gist.github.com/NewOwner/${id}`);
+        fixture.version = 2;
+        globalThis.window.location.hash = `#NewOwner/${id}`;
+        handlers.get('hashchange')();
+        await new Promise(setImmediate);
+        assert.equal(items['gist-donate'].hidden, false);
+        assert.equal(items['gist-donate-submit'].disabled, true);
+        assert.equal(items['gist-donate-counts'].textContent.includes('<img src=x onerror=alert(1)>'), true);
+        assert.equal(items['gist-donate-counts'].innerHTML, '', 'model names are never interpolated as HTML');
+        items['gist-donate-submit'].handlers.get('click')();
+        assert.deepEqual(calls, [`https://api.github.com/gists/${id}`, `https://api.github.com/gists/${id}`],
+            'a viewer without consent sends nothing to Model Tides');
+        items['gist-donate-consent'].checked = true;
+        items['gist-donate-consent'].handlers.get('change')();
+        assert.equal(items['gist-donate-submit'].disabled, false);
         globalThis.window.location.hash = '#invalid';
         handlers.get('hashchange')();
         assert.equal(items['gist-status'].textContent, 'Invalid gist address.');

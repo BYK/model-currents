@@ -20,6 +20,10 @@ try {
         db.prepare('INSERT INTO session VALUES (?, ?)').run('private-session-id', Date.UTC(2026, 8, 28));
         db.prepare('INSERT INTO message VALUES (?, ?, ?, ?)').run('private-message-id', 'private-session-id',
             Date.UTC(2026, 8, 28, 12), JSON.stringify({ role: 'assistant', providerID: 'openai', modelID: 'gpt-5', content: 'private prompt and reply' }));
+        db.prepare('INSERT INTO message VALUES (?, ?, ?, ?)').run('private-message-2', 'private-session-id',
+            Date.UTC(2026, 8, 28, 16), JSON.stringify({ role: 'assistant', providerID: 'openai', modelID: 'gpt-5' }));
+        db.prepare('INSERT INTO message VALUES (?, ?, ?, ?)').run('private-message-3', 'private-session-id',
+            Date.UTC(2026, 8, 29, 11), JSON.stringify({ role: 'assistant', providerID: 'anthropic', modelID: 'claude-sonnet-4-5' }));
     } finally { db.close(); }
 
     const bin = join(root, 'bin');
@@ -40,8 +44,9 @@ try {
     assert.ifError(exported.error);
     assert.equal(exported.status, 0, exported.stderr);
     const json = readFileSync(output, 'utf8');
-    assert.deepEqual(JSON.parse(json), { format: 'model-tides', version: 1, source: 'opencode', events: [
-        { time: Date.UTC(2026, 8, 28), model: 'openai/gpt-5', kind: 'session' },
+    assert.deepEqual(JSON.parse(json), { format: 'model-tides-daily', version: 2, source: 'opencode', days: [
+        { day: '2026-09-28', models: { 'openai/gpt-5': 1 } },
+        { day: '2026-09-29', models: { 'anthropic/claude-sonnet-4-5': 1 } },
     ] });
     assert.doesNotMatch(json, /private-(?:session|message)|private prompt and reply/);
     console.log('Standalone help and synthetic read-only SQLite export passed.');

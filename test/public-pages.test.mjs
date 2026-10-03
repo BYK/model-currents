@@ -40,7 +40,7 @@ test('personal OG image is a weighted, full-width weekly flow with safe labels a
     ]);
     const svg = imageSvg(report);
     assert.match(svg, /width="1200" height="630" viewBox="0 0 1200 630"/);
-    assert.match(svg, /Your model tide/);
+    assert.match(svg, /My model tide/);
     assert.match(svg, /font-family="Iosevka Etoile, serif"/);
     assert.match(svg, /font-family="Iosevka, monospace"/);
     assert.match(svg, /\.flow-svg \{ font-family: 'Iosevka Aile', sans-serif;/);
@@ -79,7 +79,7 @@ test('personal OG image shows an apparent shift, not an observed switch, between
         { week: '2026-09-14', model: 'openai/new', count: 5 },
     ]));
     assert.match(svg, /class="flow-ribbon flow-inferred"[^>]*><title>Apparent shift:.*not a tracked switch/);
-    assert.match(svg, /class="flow-ribbon flow-entry"[^>]*><title>1 self-reported uses of openai \/ new in 14 Sept/);
+    assert.match(svg, /class="flow-ribbon flow-entry"[^>]*><title>1 self-reported model uses of openai \/ new in 14 Sept/);
     assert.match(svg, /inferred shifts/i);
     assert.match(svg, /no tracked switches/i);
 });
@@ -91,6 +91,8 @@ test('the community OG image retains its current card', () => {
     assert.match(svg, /font-family="Iosevka, monospace"/);
     assert.match(svg, /<rect x="80" y="338" width="580" height="17"/);
     assert.doesNotMatch(svg, /Your model tide|usage-chart flow-svg/);
+    const active = imageSvg(summarize(null, [{ week: '2026-09-07', model: 'openai/gpt-5', count: 2 }], 2));
+    assert.match(active, /font-size="48">2 active session-days/);
 });
 
 test('Resvg renders the personal SVG and heading with the site fonts', async () => {
@@ -134,9 +136,9 @@ test('report metadata names the chart; hidden reports cannot be read for images 
         { week: '2026-09-14', model: 'openai/gpt-5', count: 2 },
     ]);
     const page = await pageForReport(report, 'https://example.test', shell).text();
-    assert.match(page, /<meta property="og:title" content="Your model tide[^\"]*"/);
+    assert.match(page, /<meta property="og:title" content="My model tide[^\"]*"/);
     assert.match(page, /<meta property="og:image" content="https:\/\/example\.test\/og\/019ff796-7912-7786-a7bf-a964d071294a\.png"/);
-    assert.match(page, /no exact times or model switches/i);
+    assert.match(page, /no exact times or session IDs/i);
     const queries = [];
     const db = { prepare(sql) {
         queries.push(sql);
@@ -147,6 +149,17 @@ test('report metadata names the chart; hidden reports cannot be read for images 
     } };
     assert.equal(await getReport(db, report.id), null);
     assert.match(queries[0], /c\.id = \? AND c\.published = 1/);
+});
+
+test('active-day reports label their metric in both social metadata and the share image', async () => {
+    const report = summarize('019ff796-7912-7786-a7bf-a964d071294a', [
+        { week: '2026-09-28', model: 'openai/gpt-5', count: 6 },
+    ], 2);
+    assert.match(await pageForReport(report, 'https://example.test', shell).text(), /My model tide · 6 active session-days/);
+    const svg = imageSvg(report);
+    assert.match(svg, /My model tide/);
+    assert.match(svg, /6 active session-days/);
+    assert.doesNotMatch(svg, /6 model uses/);
 });
 
 test('public report serves the interactive app shell with accurate per-link metadata', async () => {

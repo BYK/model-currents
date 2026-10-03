@@ -4,6 +4,7 @@ import { setupFlowTimeline } from './flow-timeline';
 import { renderFlowSvg } from './flow-svg/renderer';
 import { getModelColor, OTHER_MODEL_COLOR } from './model-colors';
 import { downloadBlob } from './download-image';
+import { loadOwnedForDonation, donateOwnedReport } from './donation';
 import { setupTheme } from './theme';
 import { parsePublicReport } from './weekly-snapshot';
 
@@ -29,10 +30,10 @@ root.innerHTML = `
             </div>
             <p id="report-status" class="report-status" role="status" aria-live="polite">Loading shared weekly counts…</p>
             <div class="legend" role="group" aria-label="Chart legend">
-                <span class="legend-item"><i class="legend-line"></i>Bright marks = reported model uses</span>
+                <span class="legend-item"><i class="legend-line"></i>Bright marks = reported activity</span>
                 <span class="legend-item"><i class="legend-continuity"></i>Faint streams = recurring models</span>
                 <span class="legend-item"><i class="legend-migration"></i>Crossing streams = inferred shifts</span>
-                <span class="legend-item legend-note">Weekly counts cannot show tracked switches</span>
+                <span class="legend-item legend-note">Weekly counts omit exact times and cannot show tracked switches</span>
             </div>
             <div class="model-legend" id="model-legend" role="group" aria-label="Model colors"></div>
             <div class="chart-frame">
@@ -42,7 +43,7 @@ root.innerHTML = `
             <div class="timeline-controls" id="timeline-controls" hidden>
                 <div class="timeline-head">
                     <div><p class="eyebrow">ADJUST THE WINDOW</p>
-                        <p class="timeline-instruction">Scroll to zoom around the pointer; drag the chart to pan. Adjust dates below.</p></div>
+                        <p class="timeline-instruction">Scroll or pinch to zoom; drag the chart sideways to pan. Adjust dates below.</p></div>
                     <div class="timeline-head-actions">
                         <div class="date-pair"><span id="from-date">—</span><span class="date-arrow">→</span><span id="to-date">—</span></div>
                         <div class="zoom-actions" role="group" aria-label="Timeline zoom controls">
@@ -59,6 +60,8 @@ root.innerHTML = `
             </div>
         </section>
         <div class="report-share" role="group" aria-label="Share this model tide">
+            <label class="share-nickname" for="share-nickname">Name for your post (optional)
+                <input id="share-nickname" type="text" maxlength="32" autocomplete="off" placeholder="e.g. BYK" /></label>
             <button class="text-button" id="copy-report-image" type="button">Copy image</button>
             <button class="text-button" id="download-report-image" type="button">Download PNG</button>
             <button class="text-button" id="native-share-image" type="button" hidden>Share image…</button>
@@ -66,6 +69,17 @@ root.innerHTML = `
             <a id="share-bluesky" target="_blank" rel="noopener noreferrer">Post on Bluesky ↗</a>
             <span id="share-status" role="status" aria-live="polite"></span>
         </div>
+        <section class="donation-card" aria-labelledby="donation-heading">
+            <h2 id="donation-heading">Donate your data</h2>
+            <p>Only the report owner can add these counts to the community chart. Enter your private owner key to review every stored week. The key stays in this tab and never appears in the URL.</p>
+            <p id="donate-legacy" hidden>This older report counts starts and switches. Rescan local history with the current CLI to replace it with active session-days before donating.</p>
+            <form id="donate-owner-form"><label for="donate-owner-key">Private owner key</label>
+                <input id="donate-owner-key" type="password" autocomplete="off" spellcheck="false" required />
+                <button id="donate-review" type="submit">Review counts</button></form>
+            <div id="donate-confirm" hidden><p>These exact self-reported counts will appear on the community chart, even if yours is the only contribution. Anyone can see the model and week totals.</p>
+                <pre id="donate-counts"></pre><button id="donate-submit" type="button">Donate your data</button></div>
+            <p id="donate-status" role="status" aria-live="polite"></p>
+        </section>
         <footer class="report-footer"><p>Self-reported weekly model counts; no exact times or tracked switches. Crossing streams pair declines with rises in adjacent weeks (or months when zoomed out). They suggest apparent shifts, not a person's migration. Anyone with this link can view these counts.</p>
             <a href="/">Model Tides home</a> · <a href="https://github.com/BYK/model-tides" target="_blank" rel="noopener noreferrer">Source on GitHub ↗</a></footer>
     </main>`;
@@ -83,7 +97,8 @@ const formatCount = (value: number): string => new Intl.NumberFormat('en-GB').fo
 const formatDate = (date: Date, options: Intl.DateTimeFormatOptions): string =>
     new Intl.DateTimeFormat('en-GB', { ...options, timeZone: 'UTC' }).format(date);
 const state = { rows: [] as { time: number; model: string; count: number }[],
-    minDay: 0, maxDay: 1, startDay: 0, endDay: 1, showAll: false, width: 0, height: 0 };
+    minDay: 0, maxDay: 1, startDay: 0, endDay: 1, showAll: false, width: 0, height: 0,
+    metricVersion: 1 as 1 | 2 };
 
 function render(): void {
     if (!state.rows.length) return;
@@ -99,8 +114,9 @@ function render(): void {
     const visibleSet = new Set(visible);
     const displayModel = (model: string): string => visibleSet.has(model) ? model : 'Other models';
     const total = rows.reduce((sum, row) => sum + row.count, 0);
+    const countLabel = state.metricVersion === 2 ? 'active session-days' : 'earlier model-use events';
     const displayDate = (day: number): string => formatDate(new Date(day * DAY), { day: 'numeric', month: 'short', year: 'numeric' });
-    status.textContent = `${formatCount(total)} model uses · ${displayDate(state.startDay)} → ${displayDate(state.endDay)} · ${formatCount(ranked.length)} models`;
+    status.textContent = `${formatCount(total)} ${countLabel} · ${displayDate(state.startDay)} → ${displayDate(state.endDay)} · ${formatCount(ranked.length)} models`;
     visibility.textContent = ranked.length > MAX_VISIBLE_MODELS && !showAll
         ? `Top ${MAX_VISIBLE_MODELS} + other` : `${formatCount(ranked.length)} ${ranked.length === 1 ? 'model' : 'models'}`;
     showModels.hidden = ranked.length <= MAX_VISIBLE_MODELS;
@@ -137,8 +153,8 @@ function render(): void {
         formatPeriod: (time, intervalDays) => formatDate(new Date(time), intervalDays === 30
             ? { month: 'short', year: '2-digit', timeZone: 'UTC' }
             : { day: 'numeric', month: 'short', timeZone: 'UTC' }),
-        formatNodeTitle: ({ period, label, value }) => `${period} · ${label} · ${formatCount(value)} self-reported model uses`,
-        formatLinkTitle: ({ toLabel, toPeriod, value }) => `${formatCount(value)} self-reported uses of ${toLabel} in ${toPeriod}`,
+        formatNodeTitle: ({ period, label, value }) => `${period} · ${label} · ${formatCount(value)} self-reported ${countLabel}`,
+        formatLinkTitle: ({ toLabel, toPeriod, value }) => `${formatCount(value)} self-reported ${countLabel} of ${toLabel} in ${toPeriod}`,
         formatContinuityTitle: ({ label, fromPeriod, toPeriod }) =>
             `Visual continuity: ${label} has reported model uses in ${fromPeriod} and ${toPeriod}. Weekly counts do not track sessions between periods.`,
         axisCaption: 'EARLIER ← TIME → LATER', ariaLabel: 'Your self-reported model tide over time',
@@ -175,10 +191,61 @@ window.visualViewport?.addEventListener('resize', resize);
 resize();
 
 const reportUrl = `${window.location.origin}/u/${id}`;
-const shareText = `Your model tide · ${reportUrl}`;
-element<HTMLAnchorElement>('#share-x').href = `https://twitter.com/intent/tweet?${new URLSearchParams({ text: 'Your model tide', url: reportUrl })}`;
-element<HTMLAnchorElement>('#share-bluesky').href = `https://bsky.app/intent/compose?${new URLSearchParams({ text: shareText })}`;
+const nickname = element<HTMLInputElement>('#share-nickname');
+const shareTitle = (): string => {
+    const name = nickname.value.trim().replace(/\s+/g, ' ');
+    return name && name.length <= 32 && !/[\p{C}]/u.test(name) ? `${name}'s model tide` : 'My model tide';
+};
+const shareText = (): string => `${shareTitle()} · ${reportUrl}`;
+function updateShareLinks(): void {
+    element<HTMLAnchorElement>('#share-x').href = `https://twitter.com/intent/tweet?${new URLSearchParams({ text: shareTitle(), url: reportUrl })}`;
+    element<HTMLAnchorElement>('#share-bluesky').href = `https://bsky.app/intent/compose?${new URLSearchParams({ text: shareText() })}`;
+}
+nickname.addEventListener('input', updateShareLinks);
+updateShareLinks();
 const shareStatus = element<HTMLElement>('#share-status');
+const ownerForm = element<HTMLFormElement>('#donate-owner-form');
+const ownerInput = element<HTMLInputElement>('#donate-owner-key');
+const reviewButton = element<HTMLButtonElement>('#donate-review');
+const donateButton = element<HTMLButtonElement>('#donate-submit');
+const donationStatus = element<HTMLElement>('#donate-status');
+const confirmation = element<HTMLElement>('#donate-confirm');
+const donation = { generation: 0, reviewed: null as null | { token: string; report: Awaited<ReturnType<typeof loadOwnedForDonation>> } };
+ownerInput.addEventListener('input', () => { donation.generation++; donation.reviewed = null;
+    confirmation.hidden = true; reviewButton.disabled = false; });
+ownerForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const generation = ++donation.generation;
+    const token = ownerInput.value.trim();
+    ownerInput.value = '';
+    reviewButton.disabled = true;
+    donation.reviewed = null;
+    confirmation.hidden = true;
+    donationStatus.textContent = 'Checking the owner key…';
+    void loadOwnedForDonation(id, token).then((report) => {
+        if (generation !== donation.generation) return;
+        donation.reviewed = { token, report };
+        element<HTMLElement>('#donate-counts').textContent = report.snapshot!.weeks.flatMap(({ week, models }) =>
+            Object.entries(models).map(([model, count]) => `${week} · ${model}: ${count}`)).join('\n');
+        confirmation.hidden = false;
+        donationStatus.textContent = 'Review every count before donating.';
+    }).catch(() => { if (generation === donation.generation) donationStatus.textContent = 'Could not verify ownership or review this report. Nothing was donated.'; })
+        .finally(() => { if (generation === donation.generation) reviewButton.disabled = false; });
+});
+donateButton.addEventListener('click', () => {
+    const reviewed = donation.reviewed;
+    if (!reviewed || donateButton.disabled) return;
+    donateButton.disabled = true;
+    void donateOwnedReport(id, reviewed.token, reviewed.report).then(() => {
+        donation.reviewed = null;
+        confirmation.hidden = true;
+        donationStatus.textContent = 'Donated. Your model-week counts now appear on the community chart.';
+    }).catch(() => {
+        donation.reviewed = null;
+        confirmation.hidden = true;
+        donationStatus.textContent = 'Could not confirm donation. Review the current counts again before retrying.';
+    }).finally(() => { donateButton.disabled = false; });
+});
 const imageUrl = `/og/${id}.png`;
 async function imageBlob(): Promise<Blob> {
     const response = await fetch(imageUrl, { cache: 'no-store' });
@@ -208,8 +275,8 @@ if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
         nativeShare.disabled = true;
         void (async () => {
             const file = new File([await imageBlob()], 'model-tides.png', { type: 'image/png' });
-            if (navigator.canShare?.({ files: [file] })) await navigator.share({ title: 'Your model tide', text: shareText, files: [file] });
-            else await navigator.share({ title: 'Your model tide', text: shareText, url: reportUrl });
+            if (navigator.canShare?.({ files: [file] })) await navigator.share({ title: shareTitle(), text: shareText(), files: [file] });
+            else await navigator.share({ title: shareTitle(), text: shareText(), url: reportUrl });
         })().catch(() => { shareStatus.textContent = 'Use Copy image or Download PNG to share the chart.'; })
             .finally(() => { nativeShare.disabled = false; });
     });
@@ -219,6 +286,9 @@ void (async () => {
     const response = await fetch(`/api/contributions/${id}`, { cache: 'no-store' });
     if (!response.ok) throw new Error('Report unavailable.');
     const snapshot = parsePublicReport(await response.json(), id);
+    state.metricVersion = snapshot.version;
+    ownerForm.hidden = snapshot.version !== 2;
+    element<HTMLElement>('#donate-legacy').hidden = snapshot.version === 2;
     state.rows = snapshot.weeks.flatMap(({ week, models }) =>
         Object.entries(models).map(([model, count]) => ({ time: Date.parse(`${week}T00:00:00Z`), model, count })));
     if (!state.rows.length) throw new Error('Report unavailable.');

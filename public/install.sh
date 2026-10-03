@@ -4,9 +4,12 @@ set -euo pipefail
 fail() { printf 'Model Tides: %s\n' "$1" >&2; exit 1; }
 
 if (( $# > 1 )) || [[ $# -eq 1 && "$1" != upload ]]; then
-    fail 'Usage: install.sh [upload]'
+    fail 'Usage: install.sh [upload] (MODEL_TIDES_INSTALL_ONLY=1 for install-only)'
 fi
-if [[ "${1:-}" = upload && ! -t 2 ]]; then
+if [[ -n "${MODEL_TIDES_INSTALL_ONLY:-}" && "${MODEL_TIDES_INSTALL_ONLY}" != 1 ]]; then
+    fail 'MODEL_TIDES_INSTALL_ONLY must be 1 or unset.'
+fi
+if [[ "${1:-}" = upload || "${MODEL_TIDES_INSTALL_ONLY:-}" != 1 ]] && [[ ! -t 2 ]]; then
     fail 'The upload flow needs an interactive terminal. Run model-tides upload after installing.'
 fi
 
@@ -73,6 +76,6 @@ case ":${PATH:-}:" in
     *":$install_dir:"*) ;;
     *) printf 'Add %s to your PATH to run model-tides.\n' "$install_dir" ;;
 esac
-if [[ "${1:-}" = upload ]]; then
+if [[ "${1:-}" = upload || "${MODEL_TIDES_INSTALL_ONLY:-}" != 1 ]]; then
     "$install_dir/model-tides" upload </dev/tty
 fi

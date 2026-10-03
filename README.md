@@ -1,6 +1,6 @@
 # Model Tides
 
-[Model Tides](https://modeltides.dev/) shows self-reported weekly model counts. A model-week appears in the community chart only after five contributors opt in. Until then, the chart labels its mock data. There is no account or analytics.
+[Model Tides](https://modeltides.dev/) shows self-reported weekly active session–model–day counts. Every explicitly donated model-week appears in the community chart; before the first donation, the chart labels its mock data. There is no account or analytics.
 
 ## Share weekly counts
 
@@ -9,10 +9,10 @@ The local CLI reads OpenCode, Codex, and Claude Code history, shows every week, 
 To install the latest checksum-verified standalone binary:
 
 ```sh
-curl -fsSL https://modeltides.dev/install.sh | bash -s -- upload
+curl -fsSL https://modeltides.dev/install.sh | bash
 ```
 
-The installer defaults to `~/.local/bin` and prints a PATH hint if needed. This command then opens the upload flow in your terminal, where you review weekly counts before confirming. The [homepage](https://modeltides.dev/) also offers npx, pnpx, and yarn dlx commands. The site bundles Iosevka, Iosevka Aile, and Iosevka Etoile fonts under the [SIL Open Font License](public/fonts/LICENSE).
+The installer defaults to `~/.local/bin` and prints a PATH hint if needed. It opens the upload flow on an interactive terminal; set `MODEL_TIDES_INSTALL_ONLY=1` to install without launching upload. You review exact weekly counts before confirming. The [homepage](https://modeltides.dev/) also offers npx, pnpx, and yarn dlx commands. The site bundles Iosevka, Iosevka Aile, and Iosevka Etoile fonts under the [SIL Open Font License](public/fonts/LICENSE).
 
 From a repository checkout:
 
@@ -36,9 +36,9 @@ The published CLI provides the same commands through `model-tides`. A new upload
 
 The personal link shows an interactive weekly model-flow chart with zoom, pan, and a two-ended date slider. Faint ribbons link recurring model names. Brighter crossing ribbons pair a drop in one model's count with a rise in another's, up to the smaller change, in adjacent displayed periods. When zoomed out, those periods are months. These are inferred shifts: weekly totals cannot prove that a person or session switched models. If you have `gh`, `gist` (or the `GIST` choice during upload) sends reviewed weekly counts to an **unlisted** GitHub gist. Anyone with the link can read them, and GitHub retains revisions. The `modeltides.dev/gist#<owner>/<id>` viewer fetches the JSON directly from GitHub; Model Tides receives neither the gist address nor its contents.
 
-## Keep exact-time metadata private
+## Export daily activity privately
 
-Use `npm run contribute -- export --output model-tides.json` to export local event metadata without contacting the site. It never overwrites an existing file. The JSON contains exact event timestamps: keep it private. The CLI can later read it with `--input` and derive weekly counts for a consented upload or gist. Export does not publish anything and the website no longer imports event metadata or OpenCode databases.
+Use `npm run contribute -- export --output model-tides.json` to export model names and session counts by UTC day without contacting the site. It never overwrites an existing file or includes session IDs or exact times. Keep the daily counts private. The CLI reads this v2 file with `--input` and derives weekly active session-days for a consented upload or gist. The website never imports local databases.
 
 The repository also includes optional Python converters: [`scripts/export-model-tides.py`](scripts/export-model-tides.py) for OpenCode databases and [`scripts/export-history.py`](scripts/export-history.py) for Codex and Claude Code history. They use Python's standard library, except that the Python converter needs the local `zstd` command for older `.jsonl.zst` Codex rollouts. The CLI reads these formats directly without Python or `zstd`. For example:
 
@@ -48,7 +48,7 @@ python3 scripts/export-history.py codex > model-tides.json
 python3 scripts/export-history.py claude-code > model-tides.json
 ```
 
-Run one command at a time. The OpenCode exporter opens a read-only SQLite snapshot, including committed changes in a live `-wal` file. The Codex and Claude Code converter reads `~/.codex/` or `~/.claude/projects/` by default; pass a JSONL file or history directory after the harness name to choose another location. It excludes repeated records and subagent histories. The [metadata format](MODEL-TIDES.md) contains model names and exact event times, never transcripts, paths, or session IDs. The [weekly format](WEEKLY-SNAPSHOT.md) contains only week/model/count pairs.
+Run one command at a time. These optional Python tools still write the older **v1 event archive** with exact event times. V1 events cannot recover session activity on days without a switch and cannot be uploaded as active-day counts. The Node CLI scans original history directly for v2. The OpenCode reader uses a read-only SQLite snapshot including committed changes in a live `-wal`; Codex and Claude Code readers skip repeated records and subagent histories. [Local v2 daily format](MODEL-TIDES.md) and [weekly upload format](WEEKLY-SNAPSHOT.md) describe the new metric.
 
 ## Develop
 
