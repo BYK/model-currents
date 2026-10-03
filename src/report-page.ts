@@ -30,8 +30,9 @@ root.innerHTML = `
             <p id="report-status" class="report-status" role="status" aria-live="polite">Loading shared weekly counts…</p>
             <div class="legend" role="group" aria-label="Chart legend">
                 <span class="legend-item"><i class="legend-line"></i>Bright marks = reported model uses</span>
-                <span class="legend-item"><i class="legend-continuity"></i>Faint streams = same model, resized per period</span>
-                <span class="legend-item legend-note">Weekly counts; exact times and switches are not shared</span>
+                <span class="legend-item"><i class="legend-continuity"></i>Faint streams = recurring models</span>
+                <span class="legend-item"><i class="legend-migration"></i>Crossing streams = inferred shifts</span>
+                <span class="legend-item legend-note">Weekly counts cannot show tracked switches</span>
             </div>
             <div class="model-legend" id="model-legend" role="group" aria-label="Model colors"></div>
             <div class="chart-frame">
@@ -65,7 +66,7 @@ root.innerHTML = `
             <a id="share-bluesky" target="_blank" rel="noopener noreferrer">Post on Bluesky ↗</a>
             <span id="share-status" role="status" aria-live="polite"></span>
         </div>
-        <footer class="report-footer"><p>Self-reported weekly model counts; no exact times or model switches. Faint streams show recurring model names, not tracked sessions. Anyone with this link can view these counts.</p>
+        <footer class="report-footer"><p>Self-reported weekly model counts; no exact times or tracked switches. Crossing streams pair declines with rises in adjacent weeks (or months when zoomed out). They suggest apparent shifts, not a person's migration. Anyone with this link can view these counts.</p>
             <a href="/">Model Tides home</a> · <a href="https://github.com/BYK/model-tides" target="_blank" rel="noopener noreferrer">Source on GitHub ↗</a></footer>
     </main>`;
 setupTheme(root);
@@ -128,6 +129,7 @@ function render(): void {
     message.hidden = true;
     canvas.innerHTML = renderFlowSvg(rows.map(({ time, model, count }) => ({ time, to: model, weight: count })), {
         start, end, width: state.width || scroll.clientWidth || 900, height: state.height || 520,
+        weeklyBuckets: true, inferMigrations: true,
         order: visible, displayKey: displayModel,
         displayName: (model) => model === 'Other models' ? model : model.replace('/', ' / '),
         colorFor: (model) => model === 'Other models' ? OTHER_MODEL_COLOR : getModelColor(model),

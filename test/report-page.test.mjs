@@ -76,6 +76,8 @@ test('a shared report renders an explorable flow chart from public weekly counts
         assert.match(items['chart-canvas'].innerHTML, /<svg/);
         assert.doesNotMatch(items['chart-canvas'].innerHTML, /<img src=x/);
         assert.match(items['chart-canvas'].innerHTML, /&lt;img src=x/);
+        assert.match(items['chart-canvas'].innerHTML, /class="flow-ribbon flow-inferred"/);
+        assert.match(items.app.innerHTML, /inferred shifts/i);
         assert.match(items['report-status'].textContent, /9 model uses/);
         assert.equal(items['timeline-controls'].hidden, false);
         assert.doesNotMatch(items.app.innerHTML, /href="\/local\/"/);

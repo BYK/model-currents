@@ -62,6 +62,26 @@ test('a failed GitHub fetch does not leak its response body or error text', asyn
     }), (error) => error.message === 'Could not load a valid weekly-count gist.');
 });
 
+test('complete gist and mock counts show inferred shifts, but filtered community counts do not', async () => {
+    const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
+    try {
+        const { renderWeeklyRows } = await server.ssrLoadModule('/src/global-view.ts');
+        const rows = [
+            { week: '2026-09-07', model: 'old', count: 6 },
+            { week: '2026-09-14', model: 'new', count: 5 },
+        ];
+        const chart = { innerHTML: '', setAttribute() {} };
+        renderWeeklyRows(chart, rows, 'shared');
+        assert.doesNotMatch(chart.innerHTML, /flow-inferred/);
+        renderWeeklyRows(chart, rows, 'gist');
+        assert.match(chart.innerHTML, /class="flow-ribbon flow-inferred"/);
+        renderWeeklyRows(chart, rows, 'mock');
+        assert.match(chart.innerHTML, /class="flow-ribbon flow-inferred"/);
+    } finally {
+        await server.close();
+    }
+});
+
 test('the browser renders a gist without sending its contents to Model Tides or injecting model labels', async () => {
     const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
     const originalDocument = globalThis.document;
