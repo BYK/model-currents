@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -22,13 +22,21 @@ try {
             Date.UTC(2026, 8, 28, 12), JSON.stringify({ role: 'assistant', providerID: 'openai', modelID: 'gpt-5', content: 'private prompt and reply' }));
     } finally { db.close(); }
 
-    const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(root, 'config') };
-    const help = spawnSync(command, ['help'], { encoding: 'utf8', env, timeout: 20_000 });
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    symlinkSync(command, join(bin, 'model-tides'));
+    const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(root, 'config'),
+        XDG_DATA_HOME: join(root, 'data'), PATH: `${bin}:${process.env.PATH ?? ''}` };
+    const help = spawnSync('model-tides', ['--help'], { encoding: 'utf8', env, cwd: root, timeout: 20_000 });
     assert.ifError(help.error);
     assert.equal(help.status, 0, help.stderr);
     assert.match(help.stdout, /upload.*contribute.*withdraw/s);
+    const bare = spawnSync('model-tides', [], { encoding: 'utf8', env, cwd: root, timeout: 20_000 });
+    assert.ifError(bare.error);
+    assert.equal(bare.status, 0, bare.stderr);
+    assert.match(bare.stdout, /Usage: model-tides/);
     const output = join(root, 'metadata.json');
-    const exported = spawnSync(command, ['export', '--output', output], { encoding: 'utf8', env, timeout: 20_000 });
+    const exported = spawnSync('model-tides', ['export', '--output', output], { encoding: 'utf8', env, cwd: root, timeout: 20_000 });
     assert.ifError(exported.error);
     assert.equal(exported.status, 0, exported.stderr);
     const json = readFileSync(output, 'utf8');
