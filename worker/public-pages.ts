@@ -2,8 +2,6 @@ import type { Database } from './contributions';
 import { renderFlowSvg } from '../src/flow-svg/renderer.ts';
 import { getModelColor, OTHER_MODEL_COLOR } from '../src/model-colors.ts';
 
-const DAY = 86_400_000;
-const WEEK = 7 * DAY;
 const MAX_VISIBLE_MODELS = 6;
 
 export interface CountRow {
@@ -65,23 +63,17 @@ function personalImageSvg(report: PublicReport): string {
     if (!rows.length || rows.some(({ time }) => !Number.isFinite(time))) throw new RangeError('Invalid report weeks.');
     const first = Math.min(...rows.map(({ time }) => time));
     const last = Math.max(...rows.map(({ time }) => time));
-    // The renderer uses daily buckets for short ranges. Map each week to one
-    // adjacent chart period so recurring models still get continuity ribbons.
-    // Axis labels use the original week dates; these are not event timestamps.
-    const compactWeeks = last > first && last - first <= 35 * DAY;
-    const chartTime = (time: number): number => compactWeeks ? first + (time - first) / WEEK * DAY : time;
-    const realTime = (time: number): number => compactWeeks ? first + (time - first) / DAY * WEEK : time;
     const visible = report.models.slice(0, MAX_VISIBLE_MODELS).map(({ model }) => model);
     if (report.models.length > MAX_VISIBLE_MODELS) visible.push('Other models');
     const visibleSet = new Set(visible);
     const formatCount = (value: number): string => value.toLocaleString('en-GB');
-    const chart = renderFlowSvg(rows.map(({ time, model, count }) => ({ time: chartTime(time), to: model, weight: count })), {
-        start: chartTime(first), end: chartTime(last), width: 1080, height: 350,
+    const chart = renderFlowSvg(rows.map(({ time, model, count }) => ({ time, to: model, weight: count })), {
+        start: first, end: last, width: 1080, height: 350, weeklyBuckets: true, inferMigrations: true,
         order: visible, displayKey: (model) => visibleSet.has(model) ? model : 'Other models',
         displayName: (model) => model === 'Other models' ? model : model.replace('/', ' / '),
         colorFor: (model) => model === 'Other models' ? OTHER_MODEL_COLOR : getModelColor(model),
         streamColorFor: (model) => getModelColor(model), formatValue: formatCount,
-        formatPeriod: (time, intervalDays) => new Date(realTime(time)).toLocaleDateString('en-GB', intervalDays === 30
+        formatPeriod: (time, intervalDays) => new Date(time).toLocaleDateString('en-GB', intervalDays === 30
             ? { month: 'short', year: '2-digit', timeZone: 'UTC' }
             : { day: 'numeric', month: 'short', timeZone: 'UTC' }),
         formatNodeTitle: ({ period, label, value }) => `${period} · ${label} · ${formatCount(value)} self-reported model uses`,
@@ -99,7 +91,7 @@ function personalImageSvg(report: PublicReport): string {
         return `<rect x="${x}" y="${y - 12}" width="12" height="12" rx="2" fill="${color}"/><text x="${x + 20}" y="${y}" fill="#eaf7f6" font-size="15">${escapeHtml(shortLabel)}</text>`;
     }).join('');
     return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" font-family="Iosevka Aile, sans-serif" role="img" aria-label="Your model tide: ${formatCount(report.total)} self-reported model uses over ${report.weeks} weeks">
-<title>Your model tide</title><desc>Self-reported weekly model counts over time. Faint ribbons show recurring model names, not tracked sessions or switches.</desc>
+<title>Your model tide</title><desc>Self-reported weekly model counts. Crossing ribbons show inferred shifts, not tracked switches or sessions.</desc>
 <style>.flow-svg { font-family: 'Iosevka Aile', sans-serif; }
 .flow-svg .chart-gridline { stroke: #31515a; stroke-width: 1; stroke-dasharray: 2 6; }
 .flow-svg .date-axis, .flow-svg .date-tick { stroke: #647e86; stroke-width: 1; }
@@ -111,7 +103,7 @@ function personalImageSvg(report: PublicReport): string {
 <text x="60" y="94" fill="#eaf7f6" font-family="Iosevka Etoile, serif" font-size="48">Your model tide</text>
 <text x="60" y="132" fill="#adc6c9" font-size="19">${formatCount(report.total)} model uses · ${report.weeks} ${report.weeks === 1 ? 'week' : 'weeks'} · self-reported weekly counts</text>
 ${chart}<g>${legend}
-<text x="60" y="607" fill="#adc6c9" font-size="15">Weekly counts; no exact times or switches · faint ribbons show visual continuity</text></g></svg>`;
+<text x="60" y="607" fill="#adc6c9" font-size="15">Weekly counts · crossed ribbons = inferred shifts, no tracked switches</text></g></svg>`;
 }
 
 export function imageSvg(report: PublicReport): string {

@@ -54,6 +54,10 @@
     opacity: 0.58;
 }
 
+.flow-svg .flow-inferred {
+    opacity: 0.5;
+}
+
 .flow-svg .continuity-ribbon {
     opacity: 0.24;
 }

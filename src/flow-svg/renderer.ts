@@ -44,6 +44,18 @@ export interface FlowContinuityTitleContext {
     readonly movedEntryTitle?: string;
 }
 
+export interface FlowMigrationTitleContext {
+    readonly from: string;
+    readonly to: string;
+    readonly fromLabel: string;
+    readonly toLabel: string;
+    readonly fromPeriod: string;
+    readonly toPeriod: string;
+    readonly drop: number;
+    readonly rise: number;
+    readonly value: number;
+}
+
 export interface FlowSvgOptions {
     readonly start: number;
     readonly end: number;
@@ -62,6 +74,11 @@ export interface FlowSvgOptions {
     readonly formatNodeTitle?: (context: FlowNodeTitleContext) => string;
     readonly formatLinkTitle?: (context: FlowLinkTitleContext) => string;
     readonly formatContinuityTitle?: (context: FlowContinuityTitleContext) => string;
+    readonly formatMigrationTitle?: (context: FlowMigrationTitleContext) => string;
+    /** Use weekly rather than daily buckets for short ranges of weekly counts. */
+    readonly weeklyBuckets?: boolean;
+    /** Pair unmatched declines and increases in adjacent buckets. For count-only data, never observed switches. */
+    readonly inferMigrations?: boolean;
     readonly axisCaption?: string;
     readonly ariaLabel?: string;
 }
@@ -80,6 +97,7 @@ interface Node {
     readonly rawOutgoingWeights: Map<string, number>;
     readonly continuityWeights: Map<string, number>;
     readonly continuityCenters: Map<string, number>;
+    readonly rawTops: Map<string, number>;
     eventWeight: number;
     outgoingWeight: number;
     weight: number;
@@ -95,6 +113,18 @@ interface Link {
     readonly pairs: Map<string, readonly [string | null, string]>;
     sourceOffset: number;
     targetOffset: number;
+}
+
+interface InferredMigration {
+    readonly source: Node;
+    readonly target: Node;
+    readonly from: string;
+    readonly to: string;
+    readonly drop: number;
+    readonly rise: number;
+    readonly weight: number;
+    readonly sourceOffset: number;
+    readonly targetOffset: number;
 }
 
 export const FLOW_PALETTE = [
@@ -149,6 +179,7 @@ const makeNode = (id: string, key: string, bucket: number): Node => ({
     rawOutgoingWeights: new Map(),
     continuityWeights: new Map(),
     continuityCenters: new Map(),
+    rawTops: new Map(),
     eventWeight: 0,
     outgoingWeight: 0,
     weight: 0,
@@ -174,7 +205,7 @@ export function renderFlowSvg(data: readonly FlowDatum[], options: FlowSvgOption
 
     const spanDays = Math.max(1, (end - start) / 86_400_000);
     if (!Number.isFinite(spanDays)) throw new RangeError('Flow range is too large to bucket safely.');
-    const intervalDays = spanDays <= 35 ? 1 : spanDays <= 150 ? 7 : 30;
+    const intervalDays = spanDays > 150 ? 30 : spanDays > 35 || options.weeklyBuckets ? 7 : 1;
     const dayBucket = (time: number): number => Math.floor(time / 86_400_000) * 86_400_000;
     const periodFor = (time: number): number => {
         if (intervalDays === 30) {
@@ -238,6 +269,9 @@ export function renderFlowSvg(data: readonly FlowDatum[], options: FlowSvgOption
         if (weight === 0 || datum.time < start || datum.time > end) continue;
         if (datum.from !== undefined && (typeof datum.from !== 'string' || !datum.from.trim())) {
             throw new TypeError('A provided flow source key must not be empty.');
+        }
+        if (options.inferMigrations && datum.from !== undefined) {
+            throw new TypeError('Inferred migrations require count-only data without observed sources.');
         }
         const sourceTime = datum.fromTime ?? datum.time;
         if (!Number.isFinite(sourceTime) || Math.abs(sourceTime) > maxDateTime || sourceTime > datum.time) {
@@ -322,12 +356,58 @@ export function renderFlowSvg(data: readonly FlowDatum[], options: FlowSvgOption
             node.y = y;
             node.height = node.weight * valueScale;
             node.continuityCenters.clear();
+            node.rawTops.clear();
             let continuityY = node.y;
             for (const [key, weight] of [...node.continuityWeights].sort(([a], [b]) => a.localeCompare(b))) {
+                node.rawTops.set(key, continuityY);
                 node.continuityCenters.set(key, continuityY + weight * valueScale / 2);
                 continuityY += weight * valueScale;
             }
             y += node.height + gap;
+        }
+    }
+
+    const inferredMigrations: InferredMigration[] = [];
+    const inferredIncoming = new Map<Node, Map<string, number>>();
+    if (options.inferMigrations) {
+        for (let index = 0; index < periods.length - 1; index += 1) {
+            const before = new Map((nodeLists.get(periods[index].time) ?? [])
+                .flatMap((node) => [...node.rawEventWeights].map(([key, weight]) => [key, { node, weight }] as const)));
+            const after = new Map((nodeLists.get(periods[index + 1].time) ?? [])
+                .flatMap((node) => [...node.rawEventWeights].map(([key, weight]) => [key, { node, weight }] as const)));
+            const declines = [...before].map(([key, { node, weight }]) => ({
+                key, node, drop: weight - (after.get(key)?.weight ?? 0),
+                remaining: weight - (after.get(key)?.weight ?? 0),
+                offset: Math.min(weight, after.get(key)?.weight ?? 0),
+            })).filter(({ remaining }) => remaining > 0)
+                .sort((a, b) => b.drop - a.drop || a.key.localeCompare(b.key));
+            const rises = [...after].map(([key, { node, weight }]) => ({
+                key, node, rise: weight - (before.get(key)?.weight ?? 0),
+                remaining: weight - (before.get(key)?.weight ?? 0),
+                offset: Math.min(weight, before.get(key)?.weight ?? 0),
+            })).filter(({ remaining }) => remaining > 0)
+                .sort((a, b) => b.rise - a.rise || a.key.localeCompare(b.key));
+            // Largest deltas first keeps the diagram legible. This is a visual pairing, not an identity match.
+            for (const decline of declines) {
+                for (const rise of rises) {
+                    if (decline.remaining === 0) break;
+                    if (rise.remaining === 0 || decline.node.key === rise.node.key) continue;
+                    const weight = Math.min(decline.remaining, rise.remaining);
+                    inferredMigrations.push({
+                        source: decline.node, target: rise.node, from: decline.key, to: rise.key,
+                        drop: decline.drop, rise: rise.rise, weight,
+                        sourceOffset: decline.node.rawTops.get(decline.key)! + decline.offset * valueScale,
+                        targetOffset: rise.node.rawTops.get(rise.key)! + rise.offset * valueScale,
+                    });
+                    decline.remaining -= weight;
+                    rise.remaining -= weight;
+                    decline.offset += weight;
+                    rise.offset += weight;
+                    const incoming = inferredIncoming.get(rise.node) ?? new Map<string, number>();
+                    incoming.set(rise.key, (incoming.get(rise.key) ?? 0) + weight);
+                    inferredIncoming.set(rise.node, incoming);
+                }
+            }
         }
     }
 
@@ -425,6 +505,14 @@ export function renderFlowSvg(data: readonly FlowDatum[], options: FlowSvgOption
         }
         return `${formatValue(context.value)} ${context.fromLabel} (${context.fromPeriod}) → ${context.toLabel} (${context.toPeriod})`;
     };
+    const formatMigrationTitle = options.formatMigrationTitle ?? ((context: FlowMigrationTitleContext) =>
+        `Apparent shift: ${context.fromLabel} fell by ${formatValue(context.drop)} and ` +
+        `${context.toLabel} rose by ${formatValue(context.rise)} from ${context.fromPeriod} to ${context.toPeriod}. ` +
+        `Up to ${formatValue(context.value)} line up; this is not a tracked switch.`);
+    const crossPeriodPath = (leftEdge: number, rightEdge: number, sourceY: number, targetY: number, streamHeight: number): string => {
+        const bend = Math.max(4, (rightEdge - leftEdge) * 0.46);
+        return `M ${leftEdge} ${sourceY - streamHeight / 2} C ${leftEdge + bend} ${sourceY - streamHeight / 2}, ${rightEdge - bend} ${targetY - streamHeight / 2}, ${rightEdge} ${targetY - streamHeight / 2} L ${rightEdge} ${targetY + streamHeight / 2} C ${rightEdge - bend} ${targetY + streamHeight / 2}, ${leftEdge + bend} ${sourceY + streamHeight / 2}, ${leftEdge} ${sourceY + streamHeight / 2} Z`;
+    };
 
     const periodLabels = new Map(periods.map((period) => [period.time, period.label]));
     const tickSpacing = Math.max(44, Math.min(82, intervalDays === 30 ? 70 : intervalDays === 7 ? 60 : 54));
@@ -455,6 +543,7 @@ export function renderFlowSvg(data: readonly FlowDatum[], options: FlowSvgOption
     };
     for (const link of links) {
         if (link.kind !== 'entry') continue;
+        if (options.inferMigrations) continue;
         const [, entryTarget] = pairForLink(link);
         const context: FlowLinkTitleContext = {
             kind: link.kind,
@@ -504,11 +593,16 @@ export function renderFlowSvg(data: readonly FlowDatum[], options: FlowSvgOption
                 if (fromWeight <= 0 || toWeight <= 0) continue;
                 const x1 = xFor(node.bucket) + nodeWidth / 2;
                 const x2 = xFor(following.bucket) - nodeWidth / 2;
-                const startY = node.continuityCenters.get(key) ?? node.y + node.height / 2;
-                const endY = following.continuityCenters.get(key) ?? following.y + following.height / 2;
+                const retained = Math.min(node.rawEventWeights.get(key) ?? 0, following.rawEventWeights.get(key) ?? 0);
+                const startY = options.inferMigrations
+                    ? node.rawTops.get(key)! + retained * valueScale / 2
+                    : node.continuityCenters.get(key) ?? node.y + node.height / 2;
+                const endY = options.inferMigrations
+                    ? following.rawTops.get(key)! + retained * valueScale / 2
+                    : following.continuityCenters.get(key) ?? following.y + following.height / 2;
                 const control = Math.max(0, (x2 - x1) * 0.45);
-                const fromBand = Math.min(node.height, Math.max(1, fromWeight * valueScale));
-                const toBand = Math.min(following.height, Math.max(1, toWeight * valueScale));
+                const fromBand = options.inferMigrations ? retained * valueScale : Math.min(node.height, Math.max(1, fromWeight * valueScale));
+                const toBand = options.inferMigrations ? retained * valueScale : Math.min(following.height, Math.max(1, toWeight * valueScale));
                 const path = `M ${x1} ${startY - fromBand / 2} C ${x1 + control} ${startY - fromBand / 2}, ${x2 - control} ${endY - toBand / 2}, ${x2} ${endY - toBand / 2} L ${x2} ${endY + toBand / 2} C ${x2 - control} ${endY + toBand / 2}, ${x1 + control} ${startY + fromBand / 2}, ${x1} ${startY + fromBand / 2} Z`;
                 const attachedEntries = continuityEntries.get(`${following.id}\u0000${key}`);
                 const title = formatContinuityTitle({
@@ -534,6 +628,22 @@ export function renderFlowSvg(data: readonly FlowDatum[], options: FlowSvgOption
         }
     }
 
+    for (const migration of inferredMigrations) {
+        const leftEdge = xFor(migration.source.bucket) + nodeWidth / 2;
+        const rightEdge = xFor(migration.target.bucket) - nodeWidth / 2;
+        const sourceY = migration.sourceOffset + migration.weight * valueScale / 2;
+        const targetY = migration.targetOffset + migration.weight * valueScale / 2;
+        const title = formatMigrationTitle({
+            from: migration.from, to: migration.to,
+            fromLabel: nameFor(migration.from), toLabel: nameFor(migration.to),
+            fromPeriod: periodLabels.get(migration.source.bucket) ?? '',
+            toPeriod: periodLabels.get(migration.target.bucket) ?? '',
+            drop: migration.drop, rise: migration.rise, value: migration.weight,
+        });
+        const pair = escapeSvg(JSON.stringify([[migration.from, migration.to]]));
+        parts.push(`<path class="flow-ribbon flow-inferred" d="${crossPeriodPath(leftEdge, rightEdge, sourceY, targetY, migration.weight * valueScale)}" fill="${escapeSvg(getStreamColor(migration.to, migration.target.key))}" opacity=".5" data-flow-inferred="true" data-flow-action="link" data-flow-pairs="${pair}"><title>${escapeSvg(title)}</title></path>`);
+    }
+
     const orderedLinks = [...links].sort((a, b) => {
         if (a.kind === 'entry' && b.kind !== 'entry') return -1;
         if (a.kind !== 'entry' && b.kind === 'entry') return 1;
@@ -543,6 +653,13 @@ export function renderFlowSvg(data: readonly FlowDatum[], options: FlowSvgOption
         const targetX = xFor(link.target.bucket);
         const [sourceRawKey, targetRawKey] = pairForLink(link);
         const color = escapeSvg(getStreamColor(targetRawKey, link.target.key));
+        const previousBucket = previousPeriodByTime.get(link.target.bucket);
+        const previousWeight = options.inferMigrations && previousBucket !== undefined
+            ? (nodeLists.get(previousBucket) ?? []).find((node) => node.rawEventWeights.has(targetRawKey))?.rawEventWeights.get(targetRawKey) ?? 0 : 0;
+        const retained = Math.min(previousWeight, link.weight);
+        const incoming = inferredIncoming.get(link.target)?.get(targetRawKey) ?? 0;
+        const entryWeight = options.inferMigrations && link.kind === 'entry' ? link.weight - retained - incoming : link.weight;
+        if (entryWeight <= 0) continue;
         const titleContext: FlowLinkTitleContext = {
             kind: link.kind,
             from: sourceRawKey ?? undefined,
@@ -553,14 +670,16 @@ export function renderFlowSvg(data: readonly FlowDatum[], options: FlowSvgOption
             time: link.target.bucket,
             fromPeriod: link.source ? periodLabels.get(link.source.bucket) : undefined,
             toPeriod: periodLabels.get(link.target.bucket) ?? '',
-            value: link.weight,
+            value: entryWeight,
         };
         const title = formatLinkTitle(titleContext);
         if (link.kind === 'entry') {
             if (absorbedEntryLinks.has(link)) continue;
             const backtailX = targetX - 38;
-            const centerY = link.targetOffset + link.weight * valueScale / 2;
-            const streamHeight = link.weight * valueScale;
+            const entryOffset = options.inferMigrations
+                ? link.target.rawTops.get(targetRawKey)! + (retained + incoming) * valueScale : link.targetOffset;
+            const centerY = entryOffset + entryWeight * valueScale / 2;
+            const streamHeight = entryWeight * valueScale;
             const clickPairs = escapeSvg(JSON.stringify([...link.pairs.values()]));
             const blockTop = centerY - Math.max(3, streamHeight) / 2;
             parts.push(
@@ -592,10 +711,7 @@ export function renderFlowSvg(data: readonly FlowDatum[], options: FlowSvgOption
                 const laneX = edgeX + Math.min(42, Math.max(24, width * 0.018));
                 return `M ${edgeX} ${sourceY - streamHeight / 2} C ${laneX} ${sourceY - streamHeight / 2}, ${laneX} ${targetY - streamHeight / 2}, ${edgeX} ${targetY - streamHeight / 2} L ${edgeX} ${targetY + streamHeight / 2} C ${laneX} ${targetY + streamHeight / 2}, ${laneX} ${sourceY + streamHeight / 2}, ${edgeX} ${sourceY + streamHeight / 2} Z`;
             })()
-            : (() => {
-                const bend = Math.max(4, (rightEdge - leftEdge) * 0.46);
-                return `M ${leftEdge} ${sourceY - streamHeight / 2} C ${leftEdge + bend} ${sourceY - streamHeight / 2}, ${rightEdge - bend} ${targetY - streamHeight / 2}, ${rightEdge} ${targetY - streamHeight / 2} L ${rightEdge} ${targetY + streamHeight / 2} C ${rightEdge - bend} ${targetY + streamHeight / 2}, ${leftEdge + bend} ${sourceY + streamHeight / 2}, ${leftEdge} ${sourceY + streamHeight / 2} Z`;
-            })();
+            : crossPeriodPath(leftEdge, rightEdge, sourceY, targetY, streamHeight);
         parts.push(
             `<path class="flow-ribbon ${link.kind === 'intra-period' ? 'flow-intra' : 'flow-transition'}" d="${path}" fill="${color}" opacity="${link.kind === 'intra-period' ? '.58' : '.30'}" data-flow-action="link" data-flow-pairs="${clickPairs}"><title>${escapeSvg(linkedTitle)}</title></path>`
         );
