@@ -1,6 +1,46 @@
+@font-face {
+    font-family: 'Iosevka Aile';
+    src: url('./fonts/iosevka-aile-site-400.woff2') format('woff2');
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Iosevka Aile';
+    src: url('./fonts/iosevka-aile-site-600.woff2') format('woff2');
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Iosevka Aile';
+    src: url('./fonts/iosevka-aile-site-700.woff2') format('woff2');
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Iosevka Etoile';
+    src: url('./fonts/iosevka-etoile-site-400.woff2') format('woff2');
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Iosevka';
+    src: url('./fonts/iosevka-site-400.woff2') format('woff2');
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+}
+
 :root {
     color-scheme: light dark;
-    font-family: 'Instrument Sans', 'Helvetica Neue', Arial, sans-serif;
+    font-family: 'Iosevka Aile', sans-serif;
     color: light-dark(#17343e, #eef6f5);
     background: light-dark(#eef6f5, #102832);
     font-synthesis: none;
@@ -85,7 +125,7 @@ h1, h2, p { margin-top: 0; }
 
 h1 {
     margin-bottom: 9px;
-    font-family: Georgia, 'Times New Roman', serif;
+    font-family: 'Iosevka Etoile', serif;
     font-size: clamp(43px, 5.6vw, 70px);
     font-weight: 400;
     letter-spacing: -0.055em;
@@ -118,7 +158,7 @@ h1 {
 }
 
 .chart-heading-row .eyebrow { margin-bottom: 7px; color: var(--muted); }
-h2 { margin-bottom: 0; font-family: Georgia, 'Times New Roman', serif; font-size: 22px; font-weight: 400; letter-spacing: -0.02em; }
+h2 { margin-bottom: 0; font-family: 'Iosevka Etoile', serif; font-size: 22px; font-weight: 400; letter-spacing: -0.02em; }
 .chart-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px 13px; color: var(--muted); font-size: 10px; }
 .text-button { padding: 6px 0; border: 0; background: none; color: var(--accent); font-size: 10px; font-weight: 700; cursor: pointer; }
 .text-button:hover { color: var(--ocean); }
@@ -176,18 +216,18 @@ h2 { margin-bottom: 0; font-family: Georgia, 'Times New Roman', serif; font-size
 .home-app { max-width: 1200px; padding-bottom: 60px; }
 .home-intro { padding: 72px 0 44px; text-align: center; }
 .home-intro h1 { margin: 0; font-size: clamp(40px, 6vw, 66px); }
-.home-cta { max-width: 840px; margin: 0 auto 54px; }
-.home-cta h2 { margin: 0 0 18px; font-family: 'Instrument Sans', 'Helvetica Neue', Arial, sans-serif; font-size: clamp(18px, 2.2vw, 24px); font-weight: 550; letter-spacing: -0.025em; }
-.command-strip { min-height: 72px; display: grid; grid-template-columns: 150px minmax(0, 1fr) 70px; overflow: hidden; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); box-shadow: 0 14px 32px light-dark(#8fb9b329, #04151c42); }
-.command-kind { min-width: 0; padding: 0 8px 0 18px; border: 0; border-right: 1px solid var(--line); background: var(--panel-raised); color: var(--text); font: 600 15px 'Instrument Sans', 'Helvetica Neue', Arial, sans-serif; cursor: pointer; }
+.home-cta { max-width: 650px; margin: 26px auto 54px; text-align: center; }
+.home-cta h2 { margin: 0 0 12px; font-size: clamp(22px, 2.5vw, 28px); font-weight: 400; letter-spacing: -0.025em; }
+.command-strip { min-height: 54px; display: grid; grid-template-columns: 108px minmax(0, 1fr) 50px; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); box-shadow: 0 8px 22px light-dark(#8fb9b320, #04151c35); text-align: left; }
+.command-kind { min-width: 0; padding: 0 8px 0 15px; border: 0; border-right: 1px solid var(--line); background: var(--panel-raised); color: var(--text); font: 600 14px 'Iosevka Aile', sans-serif; cursor: pointer; }
 .command-kind:focus-visible, .copy-command:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
-.command-strip code { align-self: center; padding: 0 28px; overflow-x: auto; color: var(--text); font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; font-size: clamp(12px, 1.55vw, 20px); white-space: nowrap; scrollbar-width: thin; user-select: all; }
+.command-strip code { align-self: center; padding: 0 18px; overflow-x: auto; color: var(--text); font-family: 'Iosevka', monospace; font-size: clamp(12px, 1.3vw, 15px); white-space: nowrap; scrollbar-width: thin; user-select: all; }
 .command-prompt { color: var(--accent); }
 .command-package { color: var(--ocean); }
 .command-verb { color: var(--text); }
 .copy-command { display: grid; place-items: center; padding: 0; border: 0; background: none; color: var(--muted); cursor: pointer; }
 .copy-command:hover { color: var(--accent); }
-.command-help { margin: 12px 10px 0; color: var(--muted); font-size: 13px; }
+.command-help { margin: 11px 10px 0; color: var(--muted); font-size: 12px; }
 .home-graph { padding: 27px 30px 18px; }
 .home-graph h2 { font-size: 26px; }
 .home-graph .global-status { margin: 10px 0 18px; }
@@ -240,11 +280,11 @@ h2 { margin-bottom: 0; font-family: Georgia, 'Times New Roman', serif; font-size
     .timeline-head-actions { align-self: flex-end; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
     .home-intro { padding: 54px 0 38px; }
     .home-cta { margin-bottom: 36px; }
-    .home-cta h2 { max-width: 280px; line-height: 1.25; }
-    .command-strip { min-height: 61px; grid-template-columns: 120px minmax(0, 1fr) 45px; }
-    .command-kind { padding-left: 12px; font-size: 13px; }
-    .command-strip code { padding: 0 11px; font-size: 12px; }
-    .copy-command svg { width: 20px; height: 20px; }
+    .home-cta h2 { line-height: 1.25; }
+    .command-strip { min-height: 50px; grid-template-columns: 86px minmax(0, 1fr) 42px; }
+    .command-kind { padding-left: 10px; font-size: 12px; }
+    .command-strip code { padding: 0 9px; font-size: 12px; }
+    .copy-command svg { width: 19px; height: 19px; }
     .home-graph { padding: 19px 14px 14px; }
     .home-graph h2 { font-size: 20px; }
     .home-graph .global-chart { min-height: 215px; }

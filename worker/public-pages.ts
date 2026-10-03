@@ -98,19 +98,19 @@ function personalImageSvg(report: PublicReport): string {
         const color = model === 'Other models' ? OTHER_MODEL_COLOR : getModelColor(model);
         return `<rect x="${x}" y="${y - 12}" width="12" height="12" rx="2" fill="${color}"/><text x="${x + 20}" y="${y}" fill="#eaf7f6" font-size="15">${escapeHtml(shortLabel)}</text>`;
     }).join('');
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="Your model tide: ${formatCount(report.total)} self-reported model uses over ${report.weeks} weeks">
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" font-family="Iosevka Aile, sans-serif" role="img" aria-label="Your model tide: ${formatCount(report.total)} self-reported model uses over ${report.weeks} weeks">
 <title>Your model tide</title><desc>Self-reported weekly model counts over time. Faint ribbons show recurring model names, not tracked sessions or switches.</desc>
-<style>.flow-svg { font-family: 'Noto Sans Mono', monospace; }
+<style>.flow-svg { font-family: 'Iosevka Aile', sans-serif; }
 .flow-svg .chart-gridline { stroke: #31515a; stroke-width: 1; stroke-dasharray: 2 6; }
 .flow-svg .date-axis, .flow-svg .date-tick { stroke: #647e86; stroke-width: 1; }
 .flow-svg .date-label { fill: #adc6c9; font-size: 13px; }
 .flow-svg .axis-caption { fill: #adc6c9; font-size: 11px; letter-spacing: 1px; }
 .flow-svg .usage-node { stroke: #d4e9e5; stroke-width: .7; }</style>
 <rect width="1200" height="630" fill="#102832"/><path d="M0 48Q300 10 600 48T1200 48" fill="none" stroke="#2b6e76" stroke-width="2"/>
-<g font-family="Noto Sans Mono, monospace"><text x="60" y="37" fill="#82d6ca" font-size="17" letter-spacing="3">MODEL TIDES · SHARED MODEL HISTORY</text>
-<text x="60" y="94" fill="#eaf7f6" font-size="48">Your model tide</text>
-<text x="60" y="132" fill="#adc6c9" font-size="19">${formatCount(report.total)} model uses · ${report.weeks} ${report.weeks === 1 ? 'week' : 'weeks'} · self-reported weekly counts</text></g>
-${chart}<g font-family="Noto Sans Mono, monospace">${legend}
+<text x="60" y="37" fill="#82d6ca" font-family="Iosevka, monospace" font-size="17" letter-spacing="3">MODEL TIDES · SHARED MODEL HISTORY</text>
+<text x="60" y="94" fill="#eaf7f6" font-family="Iosevka Etoile, serif" font-size="48">Your model tide</text>
+<text x="60" y="132" fill="#adc6c9" font-size="19">${formatCount(report.total)} model uses · ${report.weeks} ${report.weeks === 1 ? 'week' : 'weeks'} · self-reported weekly counts</text>
+${chart}<g>${legend}
 <text x="60" y="607" fill="#adc6c9" font-size="15">Weekly counts; no exact times or switches · faint ribbons show visual continuity</text></g></svg>`;
 }
 
@@ -125,10 +125,10 @@ export function imageSvg(report: PublicReport): string {
 <text x="1110" y="${y + 1}" fill="#eaf7f6" font-size="28" text-anchor="end">${escapeHtml(count.toLocaleString('en-GB'))}</text>`;
     }).join('');
     const label = report.id === null ? 'COMMUNITY SNAPSHOT' : 'SHARED MODEL HISTORY';
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" font-family="Iosevka Aile, sans-serif">
 <rect width="1200" height="630" fill="#102832"/><path d="M0 135Q300 65 600 135T1200 135" fill="none" stroke="#2b6e76" stroke-width="4"/>
-<text x="80" y="92" fill="#82d6ca" font-size="28" letter-spacing="4">MODEL TIDES  ·  ${label}</text>
-<text x="80" y="207" fill="#eaf7f6" font-size="72">${escapeHtml(report.total.toLocaleString('en-GB'))} model uses</text>
+<text x="80" y="92" fill="#82d6ca" font-family="Iosevka, monospace" font-size="28" letter-spacing="4">MODEL TIDES  ·  ${label}</text>
+<text x="80" y="207" fill="#eaf7f6" font-family="Iosevka Etoile, serif" font-size="72">${escapeHtml(report.total.toLocaleString('en-GB'))} model uses</text>
 <text x="80" y="265" fill="#adc6c9" font-size="30">${report.weeks} ${report.weeks === 1 ? 'week' : 'weeks'} · self-reported weekly counts</text>
 ${bars}<text x="80" y="600" fill="#adc6c9" font-size="22">modeltides.dev · models and weekly counts only</text></svg>`;
 }

@@ -3,6 +3,13 @@ set -euo pipefail
 
 fail() { printf 'Model Tides: %s\n' "$1" >&2; exit 1; }
 
+if (( $# > 1 )) || [[ $# -eq 1 && "$1" != upload ]]; then
+    fail 'Usage: install.sh [upload]'
+fi
+if [[ "${1:-}" = upload && ! -t 2 ]]; then
+    fail 'The upload flow needs an interactive terminal. Run model-tides upload after installing.'
+fi
+
 case "$(uname -s)" in
     Linux) os=linux ;;
     Darwin) os=darwin ;;
@@ -66,3 +73,6 @@ case ":${PATH:-}:" in
     *":$install_dir:"*) ;;
     *) printf 'Add %s to your PATH to run model-tides.\n' "$install_dir" ;;
 esac
+if [[ "${1:-}" = upload ]]; then
+    "$install_dir/model-tides" upload </dev/tty
+fi
