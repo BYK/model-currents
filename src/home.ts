@@ -22,7 +22,7 @@ root.innerHTML = `
             <h2 id="global-heading">Community model tides</h2>
             <p id="global-status" class="global-status" role="status" aria-live="polite">Loading shared model counts…</p>
             <div id="global-chart" class="global-chart" role="img" aria-label="Shared model counts over time"></div>
-            <p class="global-note">Self-reported counts · each model and week needs five contributors to appear.</p>
+            <p class="global-note">Self-reported activity · only explicitly donated counts appear. Earlier counts stay separate from active session-days.</p>
         </section>
 
         <section class="home-cta" aria-labelledby="home-cta-heading">
@@ -54,7 +54,7 @@ const commands = {
     npx: 'npx model-tides@latest upload',
     pnpx: 'pnpx model-tides@latest upload',
     yarn: 'yarn dlx model-tides@latest upload',
-    curl: 'curl -fsSL https://modeltides.dev/install.sh | bash -s -- upload',
+    curl: 'curl -fsSL https://modeltides.dev/install.sh | bash',
 } as const;
 const manager = root.querySelector<HTMLSelectElement>('#command-manager')!;
 const commandText = root.querySelector<HTMLElement>('#upload-command')!;

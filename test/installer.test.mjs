@@ -8,7 +8,7 @@ import test from 'node:test';
 
 const installer = new URL('../public/install.sh', import.meta.url);
 
-function runInstaller({ os = 'Linux', arch = 'x86_64', checksum = true, version = '1.2.3', fromHome = false, args = [] } = {}) {
+function runInstaller({ os = 'Linux', arch = 'x86_64', checksum = true, version = '1.2.3', fromHome = false, installOnly = true, args = [] } = {}) {
     const root = mkdtempSync(join(tmpdir(), 'model-tides-installer-'));
     const binary = Buffer.from('#!/usr/bin/env bash\n[[ "$1" == upload && -t 0 ]] || exit 9\nprintf upload > "$FAKE_UPLOAD_MARKER"\n');
     const name = `model-tides-${os === 'Darwin' ? 'darwin' : 'linux'}-${arch === 'aarch64' || arch === 'arm64' ? 'arm64' : 'x64'}`;
@@ -45,6 +45,7 @@ esac
         FAKE_BINARY: join(root, 'binary'), FAKE_CHECKSUMS: join(root, 'checksums'), FAKE_REQUESTS: join(root, 'requests'),
         FAKE_INSTALLER: installer.pathname, FAKE_UPLOAD_MARKER: join(root, 'upload-marker'),
         MODEL_TIDES_VERSION: fromHome ? '' : version, MODEL_TIDES_INSTALL_DIR: destination,
+        MODEL_TIDES_INSTALL_ONLY: fromHome || !installOnly ? '' : '1',
     } });
     return { root, binary, destination, result, requests: () => readFileSync(join(root, 'requests'), 'utf8'),
         uploaded: () => readFileSync(join(root, 'upload-marker'), 'utf8') };
@@ -53,7 +54,7 @@ esac
 test('the installer pins a requested version, verifies SHA-256, and installs only the chosen binary', () => {
     const run = runInstaller();
     try {
-        assert.equal(run.result.status, 0, run.result.stderr);
+        assert.equal(run.result.status, 0, `${run.result.stdout}\n${run.result.stderr}`);
         assert.deepEqual(readFileSync(join(run.destination, 'model-tides')), run.binary);
         assert.equal(statSync(join(run.destination, 'model-tides')).mode & 0o777, 0o755);
         assert.deepEqual(run.requests().trim().split('\n'), [
@@ -95,8 +96,8 @@ test('the installer rejects malformed release versions before any download', () 
     } finally { rmSync(run.root, { recursive: true, force: true }); }
 });
 
-test('an upload handoff requires a terminal before any download', () => {
-    const run = runInstaller({ args: ['upload'] });
+test('automatic upload requires a terminal before any download', () => {
+    const run = runInstaller({ installOnly: false });
     try {
         assert.notEqual(run.result.status, 0);
         assert.match(run.result.stderr, /needs an interactive terminal/);
@@ -105,9 +106,12 @@ test('an upload handoff requires a terminal before any download', () => {
 });
 
 test('the homepage curl command installs and launches upload with interactive input', { skip: process.platform !== 'linux' }, () => {
+    const homeSource = readFileSync(new URL('../src/home.ts', import.meta.url), 'utf8');
+    assert.match(homeSource, /curl -fsSL https:\/\/modeltides\.dev\/install\.sh \| bash'/);
+    assert.doesNotMatch(homeSource, /bash -s -- upload/);
     const run = runInstaller({ fromHome: true });
     try {
-        assert.equal(run.result.status, 0, run.result.stderr);
+        assert.equal(run.result.status, 0, `${run.result.stdout}\n${run.result.stderr}`);
         assert.equal(run.uploaded(), 'upload');
         assert.match(run.requests(), /releases\/latest\/download\/model-tides-linux-x64/);
     } finally { rmSync(run.root, { recursive: true, force: true }); }

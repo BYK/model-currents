@@ -39,6 +39,9 @@ export function setupFlowTimeline(
 ): { update: () => void } {
     const { canvas, scroll, start, end, selection, fromDate, toDate, minLabel, maxLabel, zoomIn, zoomOut, zoomReset } = elements;
     const pan: { current: Pan | null } = { current: null };
+    const touches = new Map<number, { x: number; y: number }>();
+    const pinch: { current: null | { ids: [number, number]; distance: number; startDay: number; endDay: number;
+        anchorDay: number; position: number } } = { current: null };
     const update = (): void => {
         const { minDay, maxDay, startDay, endDay } = range();
         start.min = end.min = String(minDay);
@@ -103,6 +106,26 @@ export function setupFlowTimeline(
     scroll.addEventListener('pointerdown', (event: PointerEvent) => {
         const plot = geometry();
         const current = range();
+        if (event.pointerType === 'touch') {
+            touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+            scroll.setPointerCapture(event.pointerId);
+            if (touches.size === 2 && plot && plot.lastX > plot.firstX) {
+                const ids = [...touches.keys()] as [number, number];
+                const [first, second] = ids.map((id) => touches.get(id)!);
+                const midpoint = (first.x + second.x) / 2;
+                const x = (midpoint - plot.bounds.left) / plot.bounds.width * plot.width;
+                const position = clamp((x - plot.firstX) / (plot.lastX - plot.firstX), 0, 1);
+                const day = plot.firstPeriod !== plot.lastPeriod
+                    ? (plot.firstPeriod + position * (plot.lastPeriod - plot.firstPeriod)) / DAY
+                    : (current.startDay + current.endDay) / 2;
+                pinch.current = { ids, distance: Math.max(1, Math.abs(first.x - second.x)),
+                    startDay: current.startDay, endDay: current.endDay,
+                    anchorDay: clamp(day, current.startDay, current.endDay), position };
+                pan.current = null;
+                scroll.classList.remove('is-panning');
+            }
+            if (pinch.current) return;
+        }
         if (event.button !== 0 || !plot || plot.lastX <= plot.firstX ||
             current.endDay - current.startDay >= current.maxDay - current.minDay) return;
         pan.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY,
@@ -111,6 +134,27 @@ export function setupFlowTimeline(
         scroll.setPointerCapture(event.pointerId);
     });
     scroll.addEventListener('pointermove', (event: PointerEvent) => {
+        if (event.pointerType === 'touch' && touches.has(event.pointerId)) {
+            touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+            const activePinch = pinch.current;
+            if (activePinch) {
+                const [first, second] = activePinch.ids.map((id) => touches.get(id));
+                if (first && second) {
+                    const distance = Math.abs(first.x - second.x);
+                    if (distance > 8) {
+                        const current = range();
+                        const next = zoomDateRange({ ...current, startDay: activePinch.startDay,
+                            endDay: activePinch.endDay }, activePinch.distance / distance,
+                        { day: activePinch.anchorDay, position: activePinch.position });
+                        if (next && (next.startDay !== current.startDay || next.endDay !== current.endDay)) {
+                            setRange(next.startDay, next.endDay);
+                        }
+                        event.preventDefault();
+                    }
+                }
+                return;
+            }
+        }
         const active = pan.current;
         if (!active || event.pointerId !== active.pointerId) return;
         const deltaX = event.clientX - active.startX;
@@ -130,6 +174,10 @@ export function setupFlowTimeline(
         if (next) setRange(next.startDay, next.endDay);
     });
     const endPan = (event: PointerEvent): void => {
+        if (event.pointerType === 'touch') {
+            touches.delete(event.pointerId);
+            if (pinch.current?.ids.includes(event.pointerId)) pinch.current = null;
+        }
         if (!pan.current || event.pointerId !== pan.current.pointerId) return;
         pan.current = null;
         scroll.classList.remove('is-panning');

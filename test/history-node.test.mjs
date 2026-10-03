@@ -7,10 +7,84 @@ import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import test from 'node:test';
 import { createZstdCompress } from 'node:zlib';
-import { exportLocalMetadata } from '../scripts/contribute.mjs';
+import { exportLocal, exportLocalMetadata, exportActiveLocalMetadata, snapshotFromDailyDocuments } from '../scripts/contribute.mjs';
+import { parseDailyDocument } from '../src/daily-usage.ts';
 
 const at = (seconds) => new Date(Date.UTC(2025, 0, 1) + seconds * 1000).toISOString();
 const source = (name, path) => ({ name, path });
+
+test('weekly activity counts each observed session–model–UTC-day once, including a long-running session', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'tides-active-days-'));
+    const path = join(home, 'history.db');
+    const db = new DatabaseSync(path);
+    try {
+        db.exec('CREATE TABLE session (id TEXT PRIMARY KEY, time_created INTEGER); CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT)');
+        const monday = Date.UTC(2026, 8, 28);
+        db.prepare('INSERT INTO session VALUES (?, ?)').run('private-one', monday);
+        db.prepare('INSERT INTO session VALUES (?, ?)').run('private-two', monday + 86_400_000);
+        const insert = db.prepare('INSERT INTO message VALUES (?, ?, ?, ?)');
+        for (const [id, session, offset, model] of [
+            ['private-a', 'private-one', 1, 'gpt-5'],
+            ['private-b', 'private-one', 2, 'gpt-5'],
+            ['private-c', 'private-one', 86_400_001, 'gpt-5'],
+            ['private-d', 'private-one', 86_400_002, 'claude-sonnet'],
+            ['private-e', 'private-one', 2 * 86_400_000 + 1, 'gpt-5'],
+            ['private-f', 'private-two', 86_400_003, 'gpt-5'],
+        ]) insert.run(id, session, monday + offset, JSON.stringify({ role: 'assistant', providerID: model.startsWith('claude') ? 'anthropic' : 'openai', modelID: model, content: 'private transcript' }));
+        const weekly = await exportLocal([source('OpenCode', path)]);
+        assert.deepEqual(weekly, { format: 'model-tides-weekly', version: 2, weeks: [
+            { week: '2026-09-28', models: { 'anthropic/claude-sonnet': 1, 'openai/gpt-5': 4 } },
+        ] });
+        assert.doesNotMatch(JSON.stringify(weekly), /private|content|session_id|message_id|2026-09-29/i);
+    } finally { db.close(); rmSync(home, { recursive: true, force: true }); }
+});
+
+test('Codex repeated rollouts and Claude message updates count each active model once per session and day', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'tides-activity-history-'));
+    try {
+        const codex = join(home, 'codex');
+        const claude = join(home, 'claude');
+        mkdirSync(codex);
+        mkdirSync(claude);
+        const atDay = (day, seconds = 0) => new Date(Date.UTC(2026, 8, 28 + day, 0, 0, seconds)).toISOString();
+        const meta = { type: 'session_meta', payload: { id: 'private-thread', timestamp: atDay(0) } };
+        const turn = (day, model) => ({ type: 'turn_context', timestamp: atDay(day, 1), payload: { model, instructions: 'private prompt' } });
+        writeFileSync(join(codex, 'rollout-a.jsonl'), [meta, turn(0, 'gpt-5'), turn(0, 'gpt-5'), turn(1, 'gpt-5')].map(JSON.stringify).join('\n') + '\n');
+        writeFileSync(join(codex, 'rollout-aa.jsonl'), [{ ...meta, payload: { ...meta.payload, id: 'other-thread' } },
+            turn(0, 'gpt-5')].map(JSON.stringify).join('\n') + '\n');
+        writeFileSync(join(codex, 'rollout-b.jsonl'), [meta, turn(1, 'gpt-5'), turn(1, 'gpt-5-codex')].map(JSON.stringify).join('\n') + '\n');
+        const message = (day, id, model) => ({ type: 'assistant', timestamp: atDay(day, 5), message: {
+            id, model, role: 'assistant', content: 'private reply',
+        } });
+        writeFileSync(join(claude, 'main.jsonl'), [message(0, 'private-update', 'claude-sonnet'),
+            message(0, 'private-update', 'claude-sonnet'), message(1, 'private-next', 'claude-sonnet')]
+            .map(JSON.stringify).join('\n') + '\n');
+        const daily = await exportActiveLocalMetadata([source('Codex', codex), source('Claude Code', claude)]);
+        assert.deepEqual(parseDailyDocument(daily).days, [
+            { day: '2026-09-28', models: { 'anthropic/claude-sonnet': 1, 'openai/gpt-5': 2 } },
+            { day: '2026-09-29', models: { 'anthropic/claude-sonnet': 1, 'openai/gpt-5': 1, 'openai/gpt-5-codex': 1 } },
+        ]);
+        assert.deepEqual(snapshotFromDailyDocuments([daily]).weeks, [
+            { week: '2026-09-28', models: { 'anthropic/claude-sonnet': 2, 'openai/gpt-5': 3, 'openai/gpt-5-codex': 1 } },
+        ]);
+        assert.doesNotMatch(JSON.stringify(daily), /private|prompt|reply|thread|message|sessionId/);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('daily export rejects exact-time or identity fields and cannot reinterpret v1 event metadata', () => {
+    const day = { format: 'model-tides-daily', version: 2, source: 'opencode', days: [
+        { day: '2026-09-28', models: { 'openai/gpt-5': 1 } },
+    ] };
+    assert.deepEqual(parseDailyDocument(day), day);
+    for (const invalid of [
+        { ...day, sessionId: 'private' },
+        { ...day, days: [{ ...day.days[0], transcript: 'private' }] },
+        { ...day, days: [{ ...day.days[0], day: '2026-09-28T01:00:00Z' }] },
+        { ...day, days: [...day.days, day.days[0]] },
+        { ...day, days: [{ ...day.days[0], models: { 'openai/gpt-5': 10_001 } }] },
+        { format: 'model-tides', version: 1, source: 'opencode', events: [] },
+    ]) assert.throws(() => parseDailyDocument(invalid), TypeError);
+});
 
 test('Node SQLite reads committed live WAL without changing database or sidecars, and exports no private data', async () => {
     const home = mkdtempSync(join(tmpdir(), 'tides-node-sqlite-'));

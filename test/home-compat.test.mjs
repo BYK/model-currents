@@ -11,7 +11,7 @@ test('home leads with weekly counts and does not advertise the removed browser i
     assert.match(home, /pnpx model-tides@latest upload/);
     assert.match(home, /yarn dlx model-tides@latest upload/);
     assert.match(home, /<option value="curl">curl<\/option>/);
-    assert.match(home, /curl: 'curl -fsSL https:\/\/modeltides\.dev\/install\.sh \| bash -s -- upload'/);
+    assert.match(home, /curl: 'curl -fsSL https:\/\/modeltides\.dev\/install\.sh \| bash'/);
     assert.doesNotMatch(home, /MODEL_TIDES_VERSION=/);
     assert.match(home, /navigator\.clipboard\.writeText\(commandText\.textContent/);
     assert.doesNotMatch(home, /\/local\/|Choose a file|personal chart in your browser/);

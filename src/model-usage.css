@@ -247,10 +247,23 @@ h2 { margin-bottom: 0; font-family: 'Iosevka Etoile', serif; font-size: 22px; fo
 .report-share a { color: var(--accent); font-size: 11px; font-weight: 700; text-decoration: none; }
 .report-share a:hover { color: var(--ocean); text-decoration: underline; }
 .report-share #share-status { color: var(--muted); font-size: 11px; }
+.share-nickname { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
+.share-nickname input { max-width: 135px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-raised); color: var(--text); font: inherit; }
 .report-footer { padding: 14px 30px; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .report-footer p { max-width: 900px; margin-bottom: 9px; }
 .report-footer a { color: var(--accent); text-decoration: none; }
 .report-footer a:hover { text-decoration: underline; }
+.donation-card { margin: 20px 30px; padding: 22px 25px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.donation-card h2 { margin-bottom: 9px; }
+.donation-card p { max-width: 850px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.donation-card form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 15px 0; }
+.donation-card form label { color: var(--text); font-size: 12px; }
+.donation-card > label { display: flex; align-items: center; gap: 9px; margin: 14px 0; color: var(--text); font-size: 12px; }
+.donation-card input { max-width: 320px; min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-raised); color: var(--text); font: inherit; }
+.donation-card button { padding: 9px 15px; border: 1px solid var(--teal); border-radius: 6px; background: var(--panel-raised); color: var(--accent); font: 700 12px 'Iosevka Aile', sans-serif; cursor: pointer; }
+.donation-card button:disabled { opacity: .5; cursor: default; }
+.donation-card pre { max-height: 260px; padding: 13px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; color: var(--text); font: 11px 'Iosevka', monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.donation-card [hidden] { display: none; }
 
 @media (min-width: 1500px) {
     .usage-app { padding-right: 72px; padding-left: 72px; }
@@ -278,6 +291,12 @@ h2 { margin-bottom: 0; font-family: 'Iosevka Etoile', serif; font-size: 22px; fo
     .timeline-controls { padding-right: 16px; padding-left: 16px; }
     .timeline-head { align-items: flex-start; flex-direction: column; gap: 9px; }
     .timeline-head-actions { align-self: flex-end; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+    .zoom-button { width: 44px; height: 44px; font-size: 24px; touch-action: manipulation; }
+    .range-track { height: 40px; }
+    .range-track::before, .range-selection { top: 18px; }
+    .range-track input[type='range'] { height: 40px; touch-action: none; }
+    .range-track input[type='range']::-webkit-slider-thumb { width: 24px; height: 24px; margin-top: -10px; }
+    .range-track input[type='range']::-moz-range-thumb { width: 24px; height: 24px; }
     .home-intro { padding: 54px 0 38px; }
     .home-cta { margin-bottom: 36px; }
     .home-cta h2 { line-height: 1.25; }
@@ -294,6 +313,7 @@ h2 { margin-bottom: 0; font-family: 'Iosevka Etoile', serif; font-size: 22px; fo
     .shared-report-app .report-status { padding: 0 15px 14px; }
     .report-share { gap: 8px 15px; padding: 17px 16px 0; }
     .report-footer { padding: 14px 16px; }
+    .donation-card { margin: 17px 16px; padding: 17px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

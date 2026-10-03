@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { brotliDecompressSync } from 'node:zlib';
-import { collectSources, exportLocal, publishSnapshot, reportVisibility, setAggregate, setSharing, snapshotFromDocuments } from '../scripts/contribute.mjs';
-import { parseUsageDocument } from '../src/usage-data.ts';
+import { collectSources, exportLocal, publishSnapshot, reportVisibility, setAggregate, setSharing, snapshotFromDocuments, snapshotFromDailyDocuments } from '../scripts/contribute.mjs';
+import { parseDailyDocument } from '../src/daily-usage.ts';
 
 const doc = {
     format: 'model-tides', version: 1, source: 'opencode',
@@ -15,6 +15,10 @@ const doc = {
         { time: Date.UTC(2026, 8, 29), model: 'openai/gpt-5', kind: 'switch', fromModel: 'anthropic/claude-sonnet', fromTime: Date.UTC(2026, 8, 28) },
     ],
 };
+const dailyDoc = { format: 'model-tides-daily', version: 2, source: 'opencode', days: [
+    { day: '2026-09-28', models: { 'anthropic/claude-sonnet': 1 } },
+    { day: '2026-09-29', models: { 'openai/gpt-5': 1 } },
+] };
 
 test('discovers supported local histories without following symlinks', () => {
     const home = mkdtempSync(join(tmpdir(), 'model-tides-cli-'));
@@ -34,7 +38,7 @@ test('discovers supported local histories without following symlinks', () => {
 });
 
 test('CLI sends only approved weekly model counts as Brotli, with private token only on replacement', async () => {
-    const snapshot = snapshotFromDocuments([doc]);
+    const snapshot = snapshotFromDailyDocuments([dailyDoc]);
     const calls = [];
     const fakeFetch = async (url, options) => {
         const body = JSON.parse(brotliDecompressSync(options.body).toString('utf8'));
@@ -44,10 +48,11 @@ test('CLI sends only approved weekly model counts as Brotli, with private token 
     await publishSnapshot(snapshot, null, fakeFetch, 'https://example.test/api/contributions');
     await publishSnapshot(snapshot, { id: 'public-id', token: 'private-token' }, fakeFetch,
         'https://example.test/api/contributions', false, false);
-    assert.equal(calls[0].url, 'https://example.test/api/contributions/personal');
+    assert.equal(calls[0].url, 'https://example.test/api/contributions/personal-v2');
     assert.equal(calls[0].method, 'POST');
     assert.equal(calls[0].headers['Content-Encoding'], 'br');
-    assert.equal(calls[0].headers['X-Model-Tides-Report'], 'personal-v1');
+    assert.equal(calls[0].headers['X-Model-Tides-Report'], 'personal-v2');
+    assert.equal(calls[0].headers['X-Model-Tides-Schema'], 'weekly-v2');
     assert.equal(calls[0].headers.Authorization, undefined);
     assert.equal(calls[1].url, 'https://example.test/api/contributions/public-id');
     assert.equal(calls[1].method, 'PUT');
@@ -55,7 +60,7 @@ test('CLI sends only approved weekly model counts as Brotli, with private token 
     assert.equal(calls[1].headers['X-Model-Tides-Expected-Visibility'], 'private');
     assert.equal(calls[1].headers['X-Model-Tides-Expected-Aggregate'], 'excluded');
     assert.equal(calls[1].headers['X-Model-Tides-Report'], undefined);
-    assert.deepEqual(calls[0].body, { format: 'model-tides-weekly', version: 1, weeks: [{
+    assert.deepEqual(calls[0].body, { format: 'model-tides-weekly', version: 2, weeks: [{
         week: '2026-09-28', models: { 'anthropic/claude-sonnet': 1, 'openai/gpt-5': 1 },
     }] });
     for (const key of ['events', 'time', 'kind', 'fromModel', 'fromTime', 'source', 'sessionId']) {
@@ -70,11 +75,11 @@ test('CLI warns before replacing weeks in an already public report', () => {
         mkdirSync(join(home, 'model-tides'));
         writeFileSync(join(home, 'model-tides/contribution.json'), JSON.stringify({ id, token: 's'.repeat(43) }), { mode: 0o600 });
         const input = join(home, 'metadata.json');
-        writeFileSync(input, JSON.stringify(doc));
+        writeFileSync(input, JSON.stringify(dailyDoc));
         const preload = join(home, 'public-report.mjs');
         writeFileSync(preload, `globalThis.fetch = async (url, options) => {
     if (url === 'https://modeltides.dev/api/contributions/${id}' && options?.method === undefined) {
-         return Response.json({ id: '${id}', published: true, inAggregate: true, revision: 0,
+          return Response.json({ id: '${id}', published: true, inAggregate: true, metricVersion: 2, revision: 0,
             counts: [{ week: '2026-09-28', model: 'openai/gpt-5', count: 1 }] });
     }
     throw new Error('No upload was authorized.');
@@ -88,6 +93,44 @@ test('CLI warns before replacing weeks in an already public report', () => {
         assert.equal(result.status, 0, result.stderr);
         assert.match(result.stdout, /already public.*reviewed counts.*public immediately/i);
         assert.doesNotMatch(result.stdout, /personal report stays private until you share it/i);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('a reviewed v1 owner replaces all legacy weeks through the versioned migration path, keeping the link', () => {
+    const home = mkdtempSync(join(tmpdir(), 'model-tides-metric-migrate-'));
+    try {
+        const id = '0199abcf-22aa-7333-8abc-0123456789ab';
+        const token = 's'.repeat(43);
+        mkdirSync(join(home, 'model-tides'));
+        writeFileSync(join(home, 'model-tides/contribution.json'), JSON.stringify({ id, token }), { mode: 0o600 });
+        const input = join(home, 'activity.json');
+        writeFileSync(input, JSON.stringify(dailyDoc));
+        const capture = join(home, 'request.json');
+        const preload = join(home, 'migration.mjs');
+        writeFileSync(preload, `import { writeFileSync } from 'node:fs';
+globalThis.fetch = async (url, options) => {
+    if (url === 'https://modeltides.dev/api/contributions/${id}' && options?.method === undefined)
+        return Response.json({ id: '${id}', published: true, inAggregate: true, metricVersion: 1,
+            revision: 3, counts: [{ week: '2026-09-21', model: 'older/model', count: 7 }] });
+    writeFileSync(process.env.CAPTURE, JSON.stringify({ url, method: options.method,
+        schema: options.headers['X-Model-Tides-Schema'], revision: options.headers['X-Model-Tides-Reviewed-Revision'],
+        visibility: options.headers['X-Model-Tides-Expected-Visibility'], aggregate: options.headers['X-Model-Tides-Expected-Aggregate'] }));
+    return Response.json({ id: '${id}', metricVersion: 2, published: true, inAggregate: true, replacedWeeks: 1 });
+};`);
+        const result = spawnSync(process.execPath, ['--experimental-strip-types', '--import', preload,
+            'scripts/contribute.mjs', 'upload', '--input', input], {
+            cwd: new URL('../', import.meta.url), encoding: 'utf8', input: 'YES\n', timeout: 10_000,
+            env: { ...process.env, HOME: home, XDG_CONFIG_HOME: home, CAPTURE: capture,
+                HTTPS_PROXY: 'http://127.0.0.1:1', HTTP_PROXY: 'http://127.0.0.1:1' },
+        });
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /replaces ALL earlier start\/switch counts/i);
+        assert.match(result.stdout, new RegExp(`https://modeltides\\.dev/u/${id}`));
+        assert.deepEqual(JSON.parse(readFileSync(capture, 'utf8')), {
+            url: `https://modeltides.dev/api/contributions/${id}/migrate-v2`, method: 'PUT',
+            schema: 'weekly-v2', revision: '3', visibility: 'public', aggregate: 'included',
+        });
+        assert.doesNotMatch(result.stdout + result.stderr, new RegExp(token));
     } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -229,7 +272,7 @@ test('an unlisted gist contains reviewed weekly counts, never private event meta
     try {
         const input = join(home, 'metadata.json');
         const capture = join(home, 'gist-capture.json');
-        writeFileSync(input, JSON.stringify(doc));
+        writeFileSync(input, JSON.stringify(dailyDoc));
         writeFileSync(join(home, 'gh'), `#!/usr/bin/env node
 import { readFileSync, writeFileSync } from 'node:fs';
 if (process.argv[2] === 'api' && process.argv[3] === 'user') {
@@ -255,7 +298,7 @@ process.stdout.write('https://gist.github.com/0123456789abcdef0123456789abcdef\\
         assert.match(approved.stdout, /View in browser: https:\/\/modeltides\.dev\/gist#BYK\/0123456789abcdef0123456789abcdef/);
         const { args, content } = JSON.parse(readFileSync(capture, 'utf8'));
         assert.deepEqual(args, ['gist', 'create', '--filename', 'model-tides-weekly.json', '-']);
-        assert.deepEqual(JSON.parse(content), snapshotFromDocuments([doc]));
+        assert.deepEqual(JSON.parse(content), snapshotFromDailyDocuments([dailyDoc]));
         for (const privateKey of ['events', 'time', 'source', 'fromTime', 'fromModel', 'sessionId']) {
             assert.equal(content.includes(`"${privateKey}"`), false);
         }
@@ -268,7 +311,7 @@ test('upload offers an unlisted gist when gh is present and never uploads to Mod
     try {
         const input = join(home, 'metadata.json');
         const capture = join(home, 'gist-capture.json');
-        writeFileSync(input, JSON.stringify(doc));
+        writeFileSync(input, JSON.stringify(dailyDoc));
         writeFileSync(join(home, 'gh'), `#!/usr/bin/env node
 import { readFileSync, writeFileSync } from 'node:fs';
 if (process.argv[2] === '--version') process.exit(0);
@@ -287,7 +330,7 @@ process.stdout.write('https://gist.github.com/0123456789abcdef0123456789abcdef\\
         assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
         assert.match(result.stdout, /GitHub CLI detected/);
         assert.match(result.stdout, /Unlisted gist:/);
-        assert.deepEqual(JSON.parse(JSON.parse(readFileSync(capture, 'utf8')).content), snapshotFromDocuments([doc]));
+        assert.deepEqual(JSON.parse(JSON.parse(readFileSync(capture, 'utf8')).content), snapshotFromDailyDocuments([dailyDoc]));
     } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -301,7 +344,7 @@ test('malformed input never prints private JSON text', () => {
             env: { ...process.env, HOME: home, XDG_CONFIG_HOME: home },
         });
         assert.notEqual(result.status, 0);
-        assert.match(result.stderr, /Expected a Model Tides v1 metadata file/);
+        assert.match(result.stderr, /Expected a Model Tides v2 daily activity file/);
         assert.doesNotMatch(result.stderr, /private transcript|do not print this/);
     } finally { rmSync(home, { recursive: true, force: true }); }
 });
@@ -339,7 +382,7 @@ test('link prints only the existing public URL without scanning history or makin
     } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
-test('CLI export combines private metadata without contacting the site or overwriting a file', () => {
+test('CLI export combines private active-day counts without contacting the site or overwriting a file', () => {
     const home = mkdtempSync(join(tmpdir(), 'model-tides-export-'));
     try {
         const codex = join(home, '.codex/sessions/2025/01/01');
@@ -365,14 +408,13 @@ test('CLI export combines private metadata without contacting the site or overwr
         assert.match(result.stdout, /Scanning Codex history/);
         assert.match(result.stdout, /Scanning Claude Code history/);
         const bytes = readFileSync(path, 'utf8');
-        assert.deepEqual(parseUsageDocument(JSON.parse(bytes)), { format: 'model-tides', version: 1, source: 'multiple', events: [
-            { time: Date.UTC(2025, 0, 1), model: 'openai/gpt-5', kind: 'session' },
-            { time: Date.UTC(2025, 0, 1) + 2000, model: 'anthropic/claude-sonnet-4-5', kind: 'session' },
+        assert.deepEqual(parseDailyDocument(JSON.parse(bytes)), { format: 'model-tides-daily', version: 2, source: 'multiple', days: [
+            { day: '2025-01-01', models: { 'anthropic/claude-sonnet-4-5': 1, 'openai/gpt-5': 1 } },
         ] });
         assert.doesNotMatch(bytes, /private|sessionId|message|content|cwd|instructions|path|prompt|reply/i);
         assert.equal(statSync(path).mode & 0o777, 0o600);
         assert.match(result.stdout, /Use --input to review weekly counts locally before sharing/);
-        assert.match(result.stdout, /exact event timestamps/i);
+        assert.match(result.stdout, /daily session counts/i);
 
         const repeated = run(path);
         assert.notEqual(repeated.status, 0);

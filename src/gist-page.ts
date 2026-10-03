@@ -3,9 +3,13 @@ import './flow-svg/flow-svg.css';
 import { loadGistSnapshot } from './gist-view';
 import { renderWeeklyRows } from './global-view';
 import { setupTheme } from './theme';
+import { donateGistSnapshot } from './donation';
+import { downloadBlob } from './download-image';
+import type { WeeklySnapshot } from './weekly-snapshot';
 
 const root = document.querySelector<HTMLElement>('#app');
 if (!root) throw new Error('The Model Tides gist page needs a root element.');
+const app = root;
 
 root.innerHTML = `
     <main class="usage-app home-app">
@@ -22,8 +26,20 @@ root.innerHTML = `
             <h2 id="gist-heading">Model use over time</h2>
             <p id="gist-status" class="global-status" role="status" aria-live="polite">Loading weekly counts from GitHub…</p>
             <div id="gist-chart" class="global-chart" role="img" aria-label="Unlisted gist model counts over time"></div>
-            <p class="global-note">Your browser reads this unlisted gist directly from GitHub. Model Tides never receives its file contents. Anyone with the link can read the counts, and GitHub retains revisions.</p>
+            <p class="global-note">Your browser reads this unlisted gist directly from GitHub. Model Tides receives no gist address or counts unless you choose to donate the reviewed counts. Anyone with the link can read the gist, and GitHub retains revisions.</p>
         </section>
+        <section class="donation-card" id="gist-donate" aria-labelledby="gist-donate-heading" hidden>
+            <h2 id="gist-donate-heading">Donate your data</h2>
+            <p>Having a gist link does not prove who owns it. Donate only counts from your own history. This creates a new, public personal chart and adds the exact model-week totals below to the community chart; one contribution is enough to make a model-week visible.</p>
+            <pre id="gist-donate-counts"></pre>
+            <label><input id="gist-donate-consent" type="checkbox" /> I own these counts and want to add them to the public community chart.</label>
+            <button id="gist-donate-submit" type="button" disabled>Donate your data</button>
+            <p id="gist-donate-status" role="status" aria-live="polite"></p>
+            <div id="gist-donate-result" hidden><a id="gist-personal-link" rel="noopener noreferrer">My personal chart ↗</a>
+                <button id="gist-key-download" type="button">Download private owner key again</button>
+                <p>Save this key. It lets you hide, withdraw, or delete this report; it never appears in the public link.</p></div>
+        </section>
+        <p id="gist-legacy-note" class="global-note" hidden>These are earlier start/switch counts, not active session-days. Rescan original history with the current CLI to donate the new metric.</p>
         <footer class="home-footer"><a id="gist-source" href="https://gist.github.com/" target="_blank" rel="noopener noreferrer">View gist on GitHub ↗</a> · <a href="/">Model Tides home</a></footer>
     </main>
 `;
@@ -32,10 +48,49 @@ setupTheme(root);
 const status = root.querySelector<HTMLElement>('#gist-status')!;
 const chart = root.querySelector<HTMLElement>('#gist-chart')!;
 const source = root.querySelector<HTMLAnchorElement>('#gist-source')!;
-const current = { version: 0 };
+const donationCard = root.querySelector<HTMLElement>('#gist-donate')!;
+const donateConsent = root.querySelector<HTMLInputElement>('#gist-donate-consent')!;
+const donateButton = root.querySelector<HTMLButtonElement>('#gist-donate-submit')!;
+const donateStatus = root.querySelector<HTMLElement>('#gist-donate-status')!;
+const donatedResult = root.querySelector<HTMLElement>('#gist-donate-result')!;
+const current = { version: 0, donated: false, snapshot: null as WeeklySnapshot | null,
+    key: null as { id: string; token: string } | null };
+const downloadKey = (): void => {
+    if (!current.key) return;
+    downloadBlob(new Blob([JSON.stringify(current.key)], { type: 'application/json' }), 'model-tides-private-key.json');
+};
+root.querySelector<HTMLButtonElement>('#gist-key-download')!.addEventListener('click', () => {
+    try { downloadKey(); }
+    catch { donateStatus.textContent = 'Could not download the key. Keep this tab open and try again.'; }
+});
+donateConsent.addEventListener('change', () => {
+    donateButton.disabled = current.donated || !donateConsent.checked || current.snapshot?.version !== 2;
+});
+donateButton.addEventListener('click', () => {
+    const snapshot = current.snapshot;
+    if (!snapshot || snapshot.version !== 2 || !donateConsent.checked || donateButton.disabled) return;
+    donateButton.disabled = true;
+    donateStatus.textContent = 'Donating the reviewed counts…';
+    void donateGistSnapshot(snapshot).then(({ id, token, url }) => {
+        current.donated = true;
+        current.key = { id, token };
+        app.querySelector<HTMLAnchorElement>('#gist-personal-link')!.href = url;
+        donatedResult.hidden = false;
+        donateStatus.textContent = 'Donated. Download and protect your private owner key.';
+        try { downloadKey(); }
+        catch { donateStatus.textContent = 'Donated, but the key download was blocked. Keep this tab open and download it below.'; }
+    }).catch(() => { donateStatus.textContent = 'Could not confirm donation. Check the community chart before retrying.'; })
+        .finally(() => { donateButton.disabled = current.donated || !donateConsent.checked; });
+});
 
 function showGist(): void {
     const version = ++current.version;
+    current.snapshot = null;
+    current.donated = false;
+    donationCard.hidden = true;
+    donateConsent.checked = false;
+    donateButton.disabled = true;
+    app.querySelector<HTMLElement>('#gist-legacy-note')!.hidden = true;
     chart.replaceChildren();
     const match = /^#([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)\/([0-9a-f]{32})$/.exec(window.location.hash);
     if (!match) {
@@ -54,9 +109,15 @@ function showGist(): void {
         const rows = snapshot.weeks.flatMap(({ week, models }) =>
             Object.entries(models).map(([model, count]) => ({ week, model, count })))
             .sort((a, b) => a.week.localeCompare(b.week) || a.model.localeCompare(b.model));
-        renderWeeklyRows(chart, rows, 'gist');
+        renderWeeklyRows(chart, rows, snapshot.version === 1 ? 'legacy' : 'gist');
         const total = rows.reduce((sum, row) => sum + row.count, 0);
-        status.textContent = `${total.toLocaleString('en-GB')} self-reported model uses across ${snapshot.weeks.length} weeks · unlisted gist by ${currentOwner}`;
+        status.textContent = `${total.toLocaleString('en-GB')} self-reported ${snapshot.version === 2 ? 'active session-days' : 'earlier model-use events'} across ${snapshot.weeks.length} ${snapshot.weeks.length === 1 ? 'week' : 'weeks'} · unlisted gist by ${currentOwner}`;
+        if (snapshot.version === 2) {
+            current.snapshot = snapshot;
+            donationCard.hidden = false;
+            app.querySelector<HTMLElement>('#gist-donate-counts')!.textContent = rows
+                .map(({ week, model, count }) => `${week} · ${model}: ${count}`).join('\n');
+        } else app.querySelector<HTMLElement>('#gist-legacy-note')!.hidden = false;
     }).catch(() => {
         if (version === current.version) {
             status.textContent = 'Could not load this weekly-count gist from GitHub. Check the link and connection.';

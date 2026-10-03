@@ -4,6 +4,7 @@ import { basename, join, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createZstdDecompress } from 'node:zlib';
 import { MAX_EVENTS, MAX_JSON_BYTES } from '../src/usage-data.ts';
+import { parseDailyDocument } from '../src/daily-usage.ts';
 
 const MAX_LINE_BYTES = MAX_JSON_BYTES;
 const MAX_OBSERVATIONS = MAX_EVENTS * 5;
@@ -11,6 +12,63 @@ const stamp = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/;
 const utf8 = new TextDecoder('utf-8', { fatal: true });
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const file = (path) => { try { return lstatSync(path).isFile(); } catch { return false; } };
+const OPEN_CODE_QUERY = `
+    SELECT message.session_id, message.time_created AS message_time,
+           session.time_created AS session_time,
+           json_extract(message.data, '$.providerID') AS provider_id,
+           json_extract(message.data, '$.modelID') AS model_id
+    FROM message INNER JOIN session ON session.id = message.session_id
+    WHERE json_valid(message.data)
+      AND json_extract(message.data, '$.role') = 'assistant'
+      AND json_type(message.data, '$.providerID') = 'text'
+      AND json_type(message.data, '$.modelID') = 'text'
+    ORDER BY message.session_id, message.time_created, message.id
+`;
+
+function recordActivity(days, time, model) {
+    if (!Number.isSafeInteger(time) || time < Date.UTC(1999, 11, 27) || time > Date.now() + 7 * 86_400_000 || !validModel(model)) return null;
+    const day = new Date(time).toISOString().slice(0, 10);
+    const models = days.get(day) ?? new Map();
+    models.set(model, (models.get(model) ?? 0) + 1);
+    days.set(day, models);
+    return `${day}\u0000${model}`;
+}
+
+function activeDocument(source, days) {
+    const document = { format: 'model-tides-daily', version: 2, source,
+        days: [...days].sort(([a], [b]) => a.localeCompare(b)).map(([day, models]) => ({
+            day, models: Object.fromEntries([...models].sort(([a], [b]) => a.localeCompare(b))),
+        })) };
+    return document.days.length ? parseDailyDocument(document) : document;
+}
+
+export function scanOpenCodeActive(path) {
+    if (!file(path) || [`${path}-wal`, `${path}-shm`].some((sidecar) => {
+        try { return lstatSync(sidecar).isSymbolicLink(); } catch { return false; }
+    })) throw new Error('History path must be a regular file.');
+    const db = new DatabaseSync(path, { readOnly: true });
+    try {
+        db.exec('PRAGMA query_only = ON; PRAGMA temp_store = FILE');
+        const days = new Map();
+        const previous = { session: null, seen: new Set() };
+        for (const row of db.prepare(OPEN_CODE_QUERY).iterate()) {
+            const { session_id, message_time, provider_id, model_id } = row;
+            if (typeof provider_id !== 'string' || typeof model_id !== 'string' ||
+                !provider_id || !model_id || provider_id.length > 100 || model_id.length > 200) continue;
+            const model = `${provider_id}/${model_id}`;
+            if (previous.session !== session_id) {
+                previous.session = session_id;
+                previous.seen.clear();
+            }
+            if (!Number.isSafeInteger(message_time) || Math.abs(message_time) > 8_640_000_000_000_000 || !validModel(model)) continue;
+            const key = `${new Date(message_time).toISOString().slice(0, 10)}\u0000${model}`;
+            if (previous.seen.has(key)) continue;
+            if (recordActivity(days, message_time, model) !== null) previous.seen.add(key);
+            if (days.size > MAX_EVENTS || previous.seen.size > MAX_OBSERVATIONS) throw new Error('Too many active days.');
+        }
+        return activeDocument('opencode', days);
+    } finally { db.close(); }
+}
 
 export function scanOpenCode(path) {
     if (!file(path) || [`${path}-wal`, `${path}-shm`].some((sidecar) => {
@@ -19,18 +77,7 @@ export function scanOpenCode(path) {
     const db = new DatabaseSync(path, { readOnly: true });
     try {
         db.exec('PRAGMA query_only = ON; PRAGMA temp_store = FILE');
-        const rows = db.prepare(`
-            SELECT message.session_id, message.time_created AS message_time,
-                   session.time_created AS session_time,
-                   json_extract(message.data, '$.providerID') AS provider_id,
-                   json_extract(message.data, '$.modelID') AS model_id
-            FROM message INNER JOIN session ON session.id = message.session_id
-            WHERE json_valid(message.data)
-              AND json_extract(message.data, '$.role') = 'assistant'
-              AND json_type(message.data, '$.providerID') = 'text'
-              AND json_type(message.data, '$.modelID') = 'text'
-            ORDER BY message.session_id, message.time_created, message.id
-        `);
+        const rows = db.prepare(OPEN_CODE_QUERY);
         const events = [];
         // The SQL order keeps one session's state at a time; never retain rows or transcripts.
         const previous = { session: null, model: null, time: null };
@@ -205,6 +252,16 @@ async function codexSession(path) {
         ? [state.meta.id, milliseconds(state.meta.timestamp), state.observations] : null;
 }
 
+async function codexSessionId(path) {
+    for await (const record of records(path)) {
+        if (record.type !== 'session_meta') continue;
+        const payload = record.payload;
+        return object(payload) && !subagent(payload) && typeof payload.id === 'string' &&
+            payload.id.length > 0 && payload.id.length <= 256 ? payload.id : null;
+    }
+    return null;
+}
+
 async function claudeSession(path) {
     const observations = [];
     const seen = new Set();
@@ -278,4 +335,58 @@ export async function scanHistory(source, root) {
     }
     events.sort((left, right) => left.time - right.time);
     return { format: 'model-tides', version: 1, source, events };
+}
+
+export async function scanHistoryActive(source, root) {
+    if (source !== 'codex' && source !== 'claude-code') throw new TypeError('Unsupported history source.');
+    const days = new Map();
+    const files = selectedPaths(root, source);
+    if (source === 'codex') {
+        // Index only file-to-session metadata. Group rollouts before reading model
+        // observations so only one session's deduplication state is held at once.
+        const indexed = [];
+        for (const path of files) {
+            const id = await codexSessionId(path);
+            if (id) indexed.push({ id, path });
+        }
+        indexed.sort((a, b) => a.id.localeCompare(b.id) || a.path.localeCompare(b.path));
+        const previous = { id: null, seen: new Set() };
+        const total = { observations: 0 };
+        const flush = () => {
+            for (const key of previous.seen) {
+                const [day, model] = key.split('\u0000');
+                recordActivity(days, Date.parse(`${day}T00:00:00Z`), model);
+            }
+            previous.seen.clear();
+        };
+        for (const { id: indexedId, path } of indexed) {
+            const session = await codexSession(path);
+            if (!session) continue;
+            const [id, , observations] = session;
+            if (id !== indexedId) throw new Error('History changed during scan.');
+            if (previous.id !== id) {
+                flush();
+                previous.id = id;
+            }
+            for (const [time, model] of observations) {
+                const key = `${new Date(time).toISOString().slice(0, 10)}\u0000${model}`;
+                previous.seen.add(key);
+            }
+            total.observations += observations.length;
+            if (total.observations > MAX_OBSERVATIONS || previous.seen.size > MAX_OBSERVATIONS) throw new Error('Too many observations.');
+        }
+        flush();
+    } else {
+        for (const path of files) {
+            const session = await claudeSession(path);
+            if (!session) continue;
+            const seen = new Set();
+            for (const [time, model] of session[1]) seen.add(`${new Date(time).toISOString().slice(0, 10)}\u0000${model}`);
+            for (const key of seen) {
+                const [day, model] = key.split('\u0000');
+                recordActivity(days, Date.parse(`${day}T00:00:00Z`), model);
+            }
+        }
+    }
+    return activeDocument(source, days);
 }

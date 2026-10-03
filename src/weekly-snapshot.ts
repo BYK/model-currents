@@ -1,7 +1,8 @@
 import type { UsageEvent } from './usage-data';
+import type { DailyUsageDocument } from './daily-usage';
 
 export const WEEKLY_FORMAT = 'model-tides-weekly';
-export const WEEKLY_VERSION = 1;
+export const WEEKLY_VERSION = 2;
 export const MAX_WEEKS = 520;
 export const MAX_CELLS = 2048;
 export const MAX_MODEL_COUNT = 10_000;
@@ -13,7 +14,7 @@ const weekPattern = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface WeeklySnapshot {
     readonly format: typeof WEEKLY_FORMAT;
-    readonly version: typeof WEEKLY_VERSION;
+    readonly version: 1 | typeof WEEKLY_VERSION;
     readonly weeks: readonly { readonly week: string; readonly models: Readonly<Record<string, number>> }[];
 }
 
@@ -22,6 +23,7 @@ export interface OwnedReport {
     readonly published: boolean;
     readonly inAggregate: boolean | null;
     readonly revision: number;
+    readonly metricVersion: 1 | typeof WEEKLY_VERSION;
     readonly snapshot: WeeklySnapshot | null;
 }
 
@@ -46,7 +48,7 @@ function exactKeys(value: unknown, keys: readonly string[]): value is Record<str
 
 function parseSnapshotWithLimits(input: unknown, maxWeeks: number, maxCells: number): WeeklySnapshot {
     if (!exactKeys(input, ['format', 'version', 'weeks']) || input.format !== WEEKLY_FORMAT ||
-        input.version !== WEEKLY_VERSION || !Array.isArray(input.weeks) ||
+        (input.version !== 1 && input.version !== WEEKLY_VERSION) || !Array.isArray(input.weeks) ||
         input.weeks.length < 1 || input.weeks.length > maxWeeks) {
         throw new TypeError('Invalid weekly snapshot.');
     }
@@ -74,7 +76,7 @@ function parseSnapshotWithLimits(input: unknown, maxWeeks: number, maxCells: num
         return total + entries.length;
     }, 0);
     if (cells < 1 || cells > maxCells) throw new TypeError('Invalid weekly snapshot.');
-    return { format: WEEKLY_FORMAT, version: WEEKLY_VERSION, weeks };
+    return { format: WEEKLY_FORMAT, version: input.version, weeks };
 }
 
 export function parseSnapshot(input: unknown): WeeklySnapshot {
@@ -83,14 +85,19 @@ export function parseSnapshot(input: unknown): WeeklySnapshot {
 
 export function parseOwnedReport(input: unknown, id: string): OwnedReport {
     const hasAggregate = input !== null && typeof input === 'object' && 'inAggregate' in input;
-    const oversized = exactKeys(input, ['id', 'published', 'revision', 'tooLarge', ...(hasAggregate ? ['inAggregate'] : [])]) && input.tooLarge === true;
-    if ((!oversized && !exactKeys(input, ['id', 'counts', 'published', 'revision', ...(hasAggregate ? ['inAggregate'] : [])])) || input.id !== id ||
+    const hasMetric = input !== null && typeof input === 'object' && 'metricVersion' in input;
+    const fields = [...(hasAggregate ? ['inAggregate'] : []), ...(hasMetric ? ['metricVersion'] : [])];
+    const oversized = exactKeys(input, ['id', 'published', 'revision', 'tooLarge', ...fields]) && input.tooLarge === true;
+    if ((!oversized && !exactKeys(input, ['id', 'counts', 'published', 'revision', ...fields])) || input.id !== id ||
         typeof input.published !== 'boolean' || !Number.isSafeInteger(input.revision) ||
         (input.revision as number) < 0 || (hasAggregate && typeof input.inAggregate !== 'boolean')) {
         throw new TypeError('Invalid personal report.');
     }
     const inAggregate = hasAggregate ? input.inAggregate as boolean : null;
-    if (oversized) return { id, published: input.published as boolean, inAggregate, revision: input.revision as number, snapshot: null };
+    const version = hasMetric ? input.metricVersion : 1;
+    if (version !== 1 && version !== WEEKLY_VERSION) throw new TypeError('Invalid report metric.');
+    if (oversized) return { id, published: input.published as boolean, inAggregate, revision: input.revision as number,
+        metricVersion: version, snapshot: null };
     if (!Array.isArray(input.counts) || input.counts.length < 1 || input.counts.length > MAX_REVIEW_CELLS) {
         throw new TypeError('Invalid personal report.');
     }
@@ -106,15 +113,18 @@ export function parseOwnedReport(input: unknown, id: string): OwnedReport {
         models.set(row.model, row.count as number);
         weeks.set(row.week, models);
     }
-    const snapshot = parseSnapshotWithLimits({ format: WEEKLY_FORMAT, version: WEEKLY_VERSION,
+    const snapshot = parseSnapshotWithLimits({ format: WEEKLY_FORMAT, version,
         weeks: [...weeks].sort(([a], [b]) => a.localeCompare(b)).map(([week, models]) => ({
             week, models: Object.fromEntries([...models].sort(([a], [b]) => a.localeCompare(b))),
         })) }, 2048, MAX_REVIEW_CELLS);
-    return { id, published: input.published, inAggregate, revision: input.revision as number, snapshot };
+    return { id, published: input.published, inAggregate, revision: input.revision as number,
+        metricVersion: version, snapshot };
 }
 
 export function parsePublicReport(input: unknown, id: string): WeeklySnapshot {
-    if (!exactKeys(input, ['id', 'counts', 'published']) || input.id !== id || input.published !== true) {
+    const hasMetric = input !== null && typeof input === 'object' && 'metricVersion' in input;
+    if (!exactKeys(input, ['id', 'counts', 'published', ...(hasMetric ? ['metricVersion'] : [])]) ||
+        input.id !== id || input.published !== true) {
         throw new TypeError('Invalid public report.');
     }
     const report = parseOwnedReport({ ...input, revision: 0 }, id);
@@ -139,5 +149,19 @@ export function buildWeeklySnapshot(events: Iterable<Pick<UsageEvent, 'time' | '
         result.some((item) => Object.values(item.models).some((count) => count > MAX_MODEL_COUNT))) {
         throw new RangeError('The weekly snapshot exceeds the upload limits.');
     }
-    return { format: WEEKLY_FORMAT, version: WEEKLY_VERSION, weeks: result };
+    return { format: WEEKLY_FORMAT, version: 1, weeks: result };
+}
+
+export function buildActiveWeeklySnapshot(documents: Iterable<DailyUsageDocument>): WeeklySnapshot {
+    const weeks = new Map<string, Map<string, number>>();
+    for (const document of documents) for (const { day, models: daily } of document.days) {
+        const week = weekStart(Date.parse(`${day}T00:00:00Z`));
+        const models = weeks.get(week) ?? new Map<string, number>();
+        for (const [model, count] of Object.entries(daily)) models.set(model, (models.get(model) ?? 0) + count);
+        weeks.set(week, models);
+    }
+    return parseSnapshot({ format: WEEKLY_FORMAT, version: WEEKLY_VERSION,
+        weeks: [...weeks].sort(([a], [b]) => a.localeCompare(b)).map(([week, models]) => ({
+            week, models: Object.fromEntries([...models].sort(([a], [b]) => a.localeCompare(b))),
+        })) });
 }

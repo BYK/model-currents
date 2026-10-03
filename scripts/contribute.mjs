@@ -8,9 +8,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { brotliCompressSync } from 'node:zlib';
-import { scanHistory, scanOpenCode } from './history-scanner.mjs';
+import { scanHistory, scanHistoryActive, scanOpenCode, scanOpenCodeActive } from './history-scanner.mjs';
 import { parseUsageDocument, MAX_EVENTS, MAX_JSON_BYTES } from '../src/usage-data.ts';
-import { buildWeeklySnapshot, parseOwnedReport } from '../src/weekly-snapshot.ts';
+import { parseDailyDocument } from '../src/daily-usage.ts';
+import { buildWeeklySnapshot, buildActiveWeeklySnapshot, parseOwnedReport } from '../src/weekly-snapshot.ts';
 
 const api = 'https://modeltides.dev/api/contributions';
 const credential = join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'model-tides', 'contribution.json');
@@ -48,9 +49,9 @@ function hasHistory(root, source) {
 function readMetadata(bytes) {
     if (bytes.length > MAX_JSON_BYTES) throw new Error('Metadata exceeds the local import limit.');
     try {
-        return parseUsageDocument(JSON.parse(bytes.toString('utf8')));
+        return parseDailyDocument(JSON.parse(bytes.toString('utf8')));
     } catch (error) {
-        if (error instanceof SyntaxError) throw new TypeError('Expected a Model Tides v1 metadata file.');
+        if (error instanceof SyntaxError) throw new TypeError('Expected a Model Tides v2 daily activity file.');
         throw error;
     }
 }
@@ -74,6 +75,12 @@ export function snapshotFromDocuments(documents) {
             yield* parsed.events;
         }
     })());
+}
+
+export function snapshotFromDailyDocuments(documents) {
+    const parsed = documents.map(parseDailyDocument);
+    if (parsed.some((document) => document.source === 'example')) throw new Error('Mock data cannot be contributed.');
+    return buildActiveWeeklySnapshot(parsed);
 }
 
 async function documentsFromSources(sources, onProgress = () => {}) {
@@ -109,7 +116,55 @@ async function documentsFromSources(sources, onProgress = () => {}) {
 }
 
 export async function exportLocal(sources, onProgress) {
-    return snapshotFromDocuments(await documentsFromSources(sources, onProgress));
+    return snapshotFromDailyDocuments(await activeDocumentsFromSources(sources, onProgress));
+}
+
+async function activeDocumentsFromSources(sources, onProgress = () => {}) {
+    const documents = [];
+    for (const source of sources) {
+        onProgress(`Scanning ${source.name} history…`);
+        const document = await (async () => {
+            try {
+                switch (source.name) {
+                    case 'OpenCode': return scanOpenCodeActive(source.path);
+                    case 'Codex': return await scanHistoryActive('codex', source.path);
+                    case 'Claude Code': return await scanHistoryActive('claude-code', source.path);
+                    default: throw new TypeError('Unsupported history source.');
+                }
+            } catch (error) {
+                if (error?.message === 'A complete history record is malformed.') {
+                    throw new Error(`${source.name} has a malformed history record. Nothing was exported.`);
+                }
+                throw new Error(`${source.name} could not be read. Check its local history.`, { cause: error });
+            }
+        })();
+        if (!document.days.length) {
+            onProgress(`${source.name} has no model observations; skipped.`);
+            continue;
+        }
+        if (Buffer.byteLength(JSON.stringify(document)) > MAX_JSON_BYTES) throw new Error(`${source.name} activity exceeds the export limit.`);
+        documents.push(parseDailyDocument(document));
+        onProgress(`${source.name} scan complete.`);
+    }
+    if (!documents.length) throw new Error('No model observations found.');
+    return documents;
+}
+
+export async function exportActiveLocalMetadata(sources, onProgress) {
+    const documents = await activeDocumentsFromSources(sources, onProgress);
+    const days = new Map();
+    for (const document of documents) for (const { day, models: daily } of document.days) {
+        const models = days.get(day) ?? new Map();
+        for (const [model, count] of Object.entries(daily)) models.set(model, (models.get(model) ?? 0) + count);
+        days.set(day, models);
+    }
+    const combined = parseDailyDocument({ format: 'model-tides-daily', version: 2,
+        source: documents.length === 1 ? documents[0].source : 'multiple',
+        days: [...days].sort(([a], [b]) => a.localeCompare(b)).map(([day, models]) => ({
+            day, models: Object.fromEntries([...models].sort(([a], [b]) => a.localeCompare(b))),
+        })) });
+    if (Buffer.byteLength(JSON.stringify(combined)) > MAX_JSON_BYTES) throw new Error('Combined activity exceeds the export limit.');
+    return combined;
 }
 
 export async function exportLocalMetadata(sources, onProgress) {
@@ -125,19 +180,24 @@ export async function exportLocalMetadata(sources, onProgress) {
     return document;
 }
 
-export async function publishSnapshot(snapshot, owner = null, fetchImpl = fetch, endpoint = api, published = null, inAggregate = null) {
+export async function publishSnapshot(snapshot, owner = null, fetchImpl = fetch, endpoint = api,
+    published = null, inAggregate = null, reviewedRevision = null) {
     if (owner && (typeof published !== 'boolean' || typeof inAggregate !== 'boolean')) throw new TypeError('Expected report state.');
+    const migrating = !!owner && snapshot.version === 2 && reviewedRevision !== null;
+    if (migrating && (!Number.isSafeInteger(reviewedRevision) || reviewedRevision < 0)) throw new TypeError('Expected reviewed revision.');
     const body = brotliCompressSync(Buffer.from(JSON.stringify(snapshot)));
-    const response = await fetchImpl(owner ? `${endpoint}/${owner.id}` : `${endpoint}/personal`, {
+    const response = await fetchImpl(owner ? `${endpoint}/${owner.id}${migrating ? '/migrate-v2' : ''}` :
+        `${endpoint}/${snapshot.version === 2 ? 'personal-v2' : 'personal'}`, {
         method: owner ? 'PUT' : 'POST',
         headers: {
             'Content-Type': 'application/vnd.model-tides.weekly+json',
             'Content-Encoding': 'br',
-            'X-Model-Tides-Schema': 'weekly-v1',
-            ...(!owner ? { 'X-Model-Tides-Report': 'personal-v1' } : {}),
+            'X-Model-Tides-Schema': `weekly-v${snapshot.version}`,
+            ...(!owner ? { 'X-Model-Tides-Report': `personal-v${snapshot.version}` } : {}),
             ...(owner ? { Authorization: `Bearer ${owner.token}`,
                 'X-Model-Tides-Expected-Visibility': published ? 'public' : 'private',
-                'X-Model-Tides-Expected-Aggregate': inAggregate ? 'included' : 'excluded' } : {}),
+                'X-Model-Tides-Expected-Aggregate': inAggregate ? 'included' : 'excluded',
+                ...(migrating ? { 'X-Model-Tides-Reviewed-Revision': String(reviewedRevision) } : {}) } : {}),
         },
         body,
     });
@@ -256,14 +316,14 @@ const help = `Model Tides — your models, over time
 
 Usage: model-tides <command> [options]
 
-  upload [--input metadata.json]  Publish a personal weekly chart; do not enter the community aggregate
+  upload [--input activity.json]  Publish a personal weekly chart; do not enter the community aggregate
   contribute                   Add all stored weekly counts to the community aggregate after review
   withdraw                     Remove counts from the aggregate; keep your personal chart
   share                        Make a hidden personal chart viewable by its link
   unshare                      Hide your personal chart without deleting stored counts
-  gist [--input metadata.json]  Create an unlisted GitHub gist of weekly counts (requires gh)
+  gist [--input activity.json]  Create an unlisted GitHub gist of weekly counts (requires gh)
   link                         Print your personal chart URL
-  export [--output file.json]  Export private event metadata for offline use
+  export [--output file.json]  Export daily model activity for offline use
   upload --rotate              Rotate your private replacement key
   upload --delete              Delete your stored report and its aggregate counts
   help                         Show this help
@@ -313,27 +373,27 @@ async function main() {
     }
     if (args[0] === 'export') {
         if (args.length !== 1 && (args.length !== 3 || args[1] !== '--output' || !args[2])) {
-            throw new Error('Usage: model-tides export [--output metadata.json]');
+            throw new Error('Usage: model-tides export [--output activity.json]');
         }
         const sources = collectSources();
         if (!sources.length) throw new Error('No supported harness history was found.');
-        const document = await exportLocalMetadata(sources, console.log);
+        const document = await exportActiveLocalMetadata(sources, console.log);
         const bytes = Buffer.from(JSON.stringify(document) + '\n');
         if (bytes.length > MAX_JSON_BYTES) throw new Error('Combined metadata exceeds the export limit. Export one harness at a time.');
         const output = args[2] ?? 'model-tides.json';
         writeFileSync(output, bytes, { mode: 0o600, flag: 'wx' });
-        console.log(`Saved ${document.events.length} model events to ${output}. Use --input to review weekly counts locally before sharing. This file contains exact event timestamps; keep it private.`);
+        console.log(`Saved ${document.days.length} active days to ${output}. Use --input to review weekly counts locally before sharing. This file contains model names and daily session counts; keep it private.`);
         return;
     }
     if (args[0] === 'gist') {
         if (args.length !== 1 && (args.length !== 3 || args[1] !== '--input' || !args[2])) {
-            throw new Error('Usage: model-tides gist [--input metadata.json]');
+            throw new Error('Usage: model-tides gist [--input activity.json]');
         }
         const input = args[2];
         if (input && !regular(input)) throw new Error('Input must be a regular metadata JSON file.');
         const sources = input ? [] : collectSources();
         if (!input && !sources.length) throw new Error('No supported harness history was found. Use --input for an existing metadata JSON.');
-        const snapshot = input ? snapshotFromDocuments([readMetadata(readFileSync(input))]) : await exportLocal(sources, console.log);
+        const snapshot = input ? snapshotFromDailyDocuments([readMetadata(readFileSync(input))]) : await exportLocal(sources, console.log);
         await createGist(snapshot);
         return;
     }
@@ -388,7 +448,7 @@ async function main() {
     const option = args[0];
     if (args.length > 2 || (option && !['--input', '--delete', '--rotate'].includes(option)) ||
         ((option === '--input') !== (args.length === 2))) {
-        throw new Error('Usage: model-tides upload [--input metadata.json | --delete | --rotate]');
+        throw new Error('Usage: model-tides upload [--input activity.json | --delete | --rotate]');
     }
     const owner = loadCredential();
     if (option === '--delete' || option === '--rotate') {
@@ -416,7 +476,7 @@ async function main() {
     if (!sources.length) throw new Error('No supported harness history was found. Use --input for an existing metadata JSON.');
     if (option === '--input' && !regular(sources[0].path)) throw new Error('Input must be a regular metadata JSON file.');
     const snapshot = option === '--input'
-        ? snapshotFromDocuments([readMetadata(readFileSync(sources[0].path))])
+        ? snapshotFromDailyDocuments([readMetadata(readFileSync(sources[0].path))])
         : await exportLocal(sources, console.log);
     console.log(`Checked ${sources.map(({ name }) => name).join(', ')}. The following weekly counts would be uploaded:`);
     preview(snapshot);
@@ -424,6 +484,10 @@ async function main() {
     const report = owner ? await reportVisibility(owner) : null;
     const published = report?.published ?? true;
     if (owner) {
+        if (report.metricVersion === 1) {
+            if (!report.snapshot) throw new Error('Earlier report is too large to review before replacing it. Withdraw or delete it separately.');
+            console.log('This replaces ALL earlier start/switch counts with the reviewed active session-day counts while keeping your personal link and private key. Earlier stored weeks will be removed.');
+        } else if (report.metricVersion !== 2) throw new Error('Unknown report metric. No upload was started.');
         console.log(published
             ? 'Your personal report is already public. These reviewed counts will be public immediately after replacement.'
             : 'Your personal report is private. Replacing these weeks keeps it private.');
@@ -444,10 +508,11 @@ async function main() {
     })();
     if (choice === 'GIST') return;
     if (choice !== 'YES') return;
-    const result = await publishSnapshot(snapshot, owner, fetch, api, published, report?.inAggregate ?? null);
+    const result = await publishSnapshot(snapshot, owner, fetch, api, published, report?.inAggregate ?? null,
+        report?.metricVersion === 1 ? report.revision : null);
     if (!result || !/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(result.id) ||
         result.id !== (owner?.id ?? result.id) || typeof result.published !== 'boolean' ||
-        typeof result.inAggregate !== 'boolean' ||
+        typeof result.inAggregate !== 'boolean' || result.metricVersion !== snapshot.version ||
         (!owner && (typeof result.token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(result.token)))) {
         throw new Error('Invalid upload response.');
     }

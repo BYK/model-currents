@@ -22,11 +22,11 @@ const exampleRows: AggregateRow[] = [
 ];
 
 export function renderWeeklyRows(
-    chart: HTMLElement, rows: readonly Pick<AggregateRow, 'week' | 'model' | 'count'>[], source: 'mock' | 'shared' | 'gist',
+    chart: HTMLElement, rows: readonly Pick<AggregateRow, 'week' | 'model' | 'count'>[], source: 'mock' | 'shared' | 'gist' | 'legacy',
     showAll = false,
 ): void {
     const example = source === 'mock';
-    const label = example ? 'mock' : source === 'gist' ? 'gist' : 'shared';
+    const label = source === 'legacy' ? 'earlier model-use events' : 'active session-days';
     const totals = new Map<string, number>();
     for (const { model, count } of rows) totals.set(model, (totals.get(model) ?? 0) + count);
     const ordered = [...totals].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
@@ -42,37 +42,38 @@ export function renderWeeklyRows(
         displayKey: (model) => visible.has(model) ? model : 'Other models',
         colorFor: getModelColor,
         streamColorFor: (model) => getModelColor(model),
-        formatValue: (value) => `${value.toLocaleString('en-GB')} ${label} uses`,
-        formatNodeTitle: ({ label, period, value }) => `${label} · ${period}\n${value.toLocaleString('en-GB')} ${example ? 'mock' : 'self-reported'} uses`,
-        formatLinkTitle: ({ toLabel, toPeriod, value }) => `${toLabel} · ${toPeriod}\n${value.toLocaleString('en-GB')} ${example ? 'mock' : 'self-reported'} uses`,
+        formatValue: (value) => `${value.toLocaleString('en-GB')} ${label}`,
+        formatNodeTitle: ({ label: model, period, value }) => `${model} · ${period}\n${value.toLocaleString('en-GB')} ${example ? 'mock' : 'self-reported'} ${label}`,
+        formatLinkTitle: ({ toLabel, toPeriod, value }) => `${toLabel} · ${toPeriod}\n${value.toLocaleString('en-GB')} ${example ? 'mock' : 'self-reported'} ${label}`,
         formatContinuityTitle: ({ label, fromPeriod, toPeriod }) => `${label}: appears in ${fromPeriod} and ${toPeriod}. This does not track people between periods.`,
         axisCaption: example ? 'EARLIER ← EXAMPLE MODEL COUNTS → LATER' : 'EARLIER ← REPORTED MODEL COUNTS → LATER',
         ariaLabel: example ? 'Mock example of weekly model counts' : 'Self-reported model counts by week, grouped into wider periods over longer histories',
     });
     chart.setAttribute('aria-label', example ? 'Mock example of weekly model counts' :
-        source === 'gist' ? 'Unlisted gist model counts over time' : 'Shared model counts over time');
+        source === 'gist' ? 'Unlisted gist model counts over time' : source === 'legacy' ?
+            'Earlier shared model-use events over time' : 'Shared active session-days over time');
 }
 
 export async function loadGlobalView(chart: HTMLElement, status: HTMLElement, table: HTMLElement | null, showExample = false): Promise<void> {
     try {
         const response = await fetch('/api/aggregate', { cache: 'no-store' });
         if (!response.ok) throw new Error('Shared timeline is unavailable.');
-        const data: { weeks: AggregateRow[]; truncated: boolean } = await response.json();
-        if (!Array.isArray(data.weeks)) throw new Error('Shared timeline is unavailable.');
+        const data: { weeks: AggregateRow[]; truncated: boolean; metricVersion: number } = await response.json();
+        if (!Array.isArray(data.weeks) || (data.metricVersion !== 1 && data.metricVersion !== 2)) throw new Error('Shared timeline is unavailable.');
         const rows = data.weeks.filter((row) => typeof row.week === 'string' && typeof row.model === 'string' &&
-            Number.isSafeInteger(row.count) && row.count > 0 && Number.isSafeInteger(row.contributors) && row.contributors >= 5);
+            Number.isSafeInteger(row.count) && row.count > 0 && Number.isSafeInteger(row.contributors) && row.contributors >= 1);
         if (rows.length === 0) {
             status.textContent = showExample
-                ? 'Mock data · public counts appear after five contributors share a model and week.'
-                : 'No weekly model has five contributors yet.';
+                ? 'Mock data · no active-day counts have been contributed yet.'
+                : 'No weekly counts have been contributed yet.';
             if (showExample) renderWeeklyRows(chart, exampleRows, 'mock');
             else chart.replaceChildren();
             table?.replaceChildren();
             return;
         }
-        renderWeeklyRows(chart, rows, 'shared');
+        renderWeeklyRows(chart, rows, data.metricVersion === 1 ? 'legacy' : 'shared');
         const total = rows.reduce((sum, row) => sum + row.count, 0);
-        const summary = `${total.toLocaleString('en-GB')} shared model uses · ${new Set(rows.map(({ week }) => week)).size} visible weeks`;
+        const summary = `${total.toLocaleString('en-GB')} shared ${data.metricVersion === 2 ? 'active session-days' : 'earlier session starts and model switches'} · ${new Set(rows.map(({ week }) => week)).size} visible weeks`;
         status.textContent = showExample ? `${summary}${data.truncated ? ' · first 3,000 cells shown' : ''}` :
             `${summary}. ${data.truncated ? 'Only the first 3,000 eligible model-week cells are shown.' :
                 'Long date ranges group weeks into months; faint ribbons link recurring model names, not people.'}`;
