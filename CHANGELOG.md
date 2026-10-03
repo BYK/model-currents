@@ -1,4 +1,12 @@
 # Changelog
+## 2.0.0
+
+### Other Changes
+
+- Count active session-days and refine sharing by @BYK in [#22](https://github.com/BYK/model-tides/pull/22)
+- Show inferred model migrations in weekly charts by @BYK in [#21](https://github.com/BYK/model-tides/pull/21)
+- Refine homepage typography and install flow by @BYK in [#19](https://github.com/BYK/model-tides/pull/19)
+
 ## 1.2.1
 
 ### Fixes
