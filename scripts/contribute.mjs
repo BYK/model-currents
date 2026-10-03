@@ -2,6 +2,7 @@
 /** Discover local harnesses, show the exact weekly snapshot, then ask before sending it. */
 import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { isSea } from 'node:sea';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -473,6 +474,7 @@ async function main() {
     console.log('A separate private replacement key is stored in your local config directory. Never share it.');
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
+if (isSea() || (process.argv[1] && existsSync(process.argv[1]) &&
+    fileURLToPath(import.meta.url) === realpathSync(process.argv[1]))) {
     main().catch((error) => { console.error(error instanceof Error ? error.message : 'Could not contribute.'); process.exitCode = 1; });
 }
