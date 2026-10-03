@@ -28,14 +28,15 @@ root.innerHTML = `
         <section class="home-cta" aria-labelledby="home-cta-heading">
             <h2 id="home-cta-heading">Share your weekly model counts</h2>
             <div class="command-strip">
-                <label class="visually-hidden" for="command-manager">Choose a package manager</label>
-                <select class="command-kind" id="command-manager" aria-label="Choose a package manager">
+                <label class="visually-hidden" for="command-manager">Choose an installation method</label>
+                <select class="command-kind" id="command-manager" aria-label="Choose an installation method">
                     <option value="npx">npx</option>
                     <option value="pnpx">pnpx</option>
                     <option value="yarn">yarn dlx</option>
+                    <option value="standalone">Standalone</option>
                 </select>
                 <code id="upload-command">npx model-tides@latest upload</code>
-                <button class="copy-command" id="copy-command" type="button" aria-label="Copy upload command" title="Copy upload command"><svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></button>
+                <button class="copy-command" id="copy-command" type="button" aria-label="Copy command" title="Copy command"><svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></button>
             </div>
             <p class="command-help">Review counts locally, then choose a personal link or an unlisted gist.</p>
             <p class="visually-hidden" id="command-status" role="status" aria-live="polite"></p>
@@ -53,19 +54,24 @@ const commands = {
     npx: 'npx model-tides@latest upload',
     pnpx: 'pnpx model-tides@latest upload',
     yarn: 'yarn dlx model-tides@latest upload',
+    standalone: 'curl -fsSL https://modeltides.dev/install.sh | MODEL_TIDES_VERSION=1.2.0 bash',
 } as const;
 const manager = root.querySelector<HTMLSelectElement>('#command-manager')!;
 const commandText = root.querySelector<HTMLElement>('#upload-command')!;
+const commandHelp = root.querySelector<HTMLElement>('.command-help')!;
 const commandStatus = root.querySelector<HTMLElement>('#command-status')!;
 manager.addEventListener('change', () => {
-    if (!(manager.value in commands)) throw new RangeError('Unknown package manager.');
+    if (!(manager.value in commands)) throw new RangeError('Unknown installation method.');
     commandText.textContent = commands[manager.value as keyof typeof commands];
+    commandHelp.textContent = manager.value === 'standalone'
+        ? 'Linux and macOS, no Node or Python. Run model-tides upload after installing.'
+        : 'Review counts locally, then choose a personal link or an unlisted gist.';
     commandStatus.textContent = '';
 });
 root.querySelector<HTMLButtonElement>('#copy-command')!.addEventListener('click', async () => {
     try {
         await navigator.clipboard.writeText(commandText.textContent ?? '');
-        commandStatus.textContent = 'Upload command copied.';
+        commandStatus.textContent = 'Command copied.';
     } catch {
         commandStatus.textContent = 'Copy failed. Select the command to copy it.';
     }

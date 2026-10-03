@@ -4,7 +4,16 @@
 
 ## Share weekly counts
 
-The local CLI reads OpenCode, Codex, and Claude Code history, shows every week, model, and count, and asks you to type `YES` before publishing. It needs Node.js 24 or newer, not Python or `zstd`. Only the reviewed week/model/count pairs leave your device. No prompts, replies, exact event times, paths, session IDs, or imported files are uploaded. Model names, including older versions and provider-specific aliases, are shared exactly as shown.
+The local CLI reads OpenCode, Codex, and Claude Code history, shows every week, model, and count, and asks you to type `YES` before publishing. The npm package needs Node.js 24 or newer; the standalone Linux/macOS binary needs neither Node nor Python. Only the reviewed week/model/count pairs leave your device. No prompts, replies, exact event times, paths, session IDs, or imported files are uploaded. Model names, including older versions and provider-specific aliases, are shared exactly as shown.
+
+To install the checksum-verified standalone binary from the tested 1.2.0 release:
+
+```sh
+curl -fsSL https://modeltides.dev/install.sh | MODEL_TIDES_VERSION=1.2.0 bash
+model-tides upload
+```
+
+The installer defaults to `~/.local/bin` and prints a PATH hint if needed. The [homepage](https://modeltides.dev/) also offers npx, pnpx, and yarn dlx commands.
 
 From a repository checkout:
 

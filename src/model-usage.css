@@ -178,7 +178,7 @@ h2 { margin-bottom: 0; font-family: Georgia, 'Times New Roman', serif; font-size
 .home-intro h1 { margin: 0; font-size: clamp(40px, 6vw, 66px); }
 .home-cta { max-width: 840px; margin: 0 auto 54px; }
 .home-cta h2 { margin: 0 0 18px; font-family: 'Instrument Sans', 'Helvetica Neue', Arial, sans-serif; font-size: clamp(18px, 2.2vw, 24px); font-weight: 550; letter-spacing: -0.025em; }
-.command-strip { min-height: 72px; display: grid; grid-template-columns: 112px minmax(0, 1fr) 70px; overflow: hidden; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); box-shadow: 0 14px 32px light-dark(#8fb9b329, #04151c42); }
+.command-strip { min-height: 72px; display: grid; grid-template-columns: 150px minmax(0, 1fr) 70px; overflow: hidden; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); box-shadow: 0 14px 32px light-dark(#8fb9b329, #04151c42); }
 .command-kind { min-width: 0; padding: 0 8px 0 18px; border: 0; border-right: 1px solid var(--line); background: var(--panel-raised); color: var(--text); font: 600 15px 'Instrument Sans', 'Helvetica Neue', Arial, sans-serif; cursor: pointer; }
 .command-kind:focus-visible, .copy-command:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 .command-strip code { align-self: center; padding: 0 28px; overflow-x: auto; color: var(--text); font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; font-size: clamp(12px, 1.55vw, 20px); white-space: nowrap; scrollbar-width: thin; user-select: all; }
@@ -241,7 +241,7 @@ h2 { margin-bottom: 0; font-family: Georgia, 'Times New Roman', serif; font-size
     .home-intro { padding: 54px 0 38px; }
     .home-cta { margin-bottom: 36px; }
     .home-cta h2 { max-width: 280px; line-height: 1.25; }
-    .command-strip { min-height: 61px; grid-template-columns: 100px minmax(0, 1fr) 45px; }
+    .command-strip { min-height: 61px; grid-template-columns: 120px minmax(0, 1fr) 45px; }
     .command-kind { padding-left: 12px; font-size: 13px; }
     .command-strip code { padding: 0 11px; font-size: 12px; }
     .copy-command svg { width: 20px; height: 20px; }
