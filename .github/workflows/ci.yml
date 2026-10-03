@@ -36,9 +36,11 @@ jobs:
             matrix:
                 include:
                     - family: linux
+                      platform: linux
                       runner: ubuntu-latest
                       targets: linux-x64 linux-arm64
                     - family: macos
+                      platform: darwin
                       runner: macos-latest
                       targets: darwin-x64 darwin-arm64
         steps:
@@ -50,11 +52,11 @@ jobs:
             - run: npm ci
             - run: npm run build:standalone -- ${{ matrix.targets }}
             - name: Check standalone history reading without private data
-              run: node scripts/verify-standalone.mjs "dist-bin/model-tides-${{ matrix.family }}-$(node -p 'process.arch')"
+              run: node scripts/verify-standalone.mjs "dist-bin/model-tides-${{ matrix.platform }}-$(node -p 'process.arch')"
             - uses: actions/upload-artifact@v4
               with:
                   name: binaries-${{ matrix.family }}
-                  path: dist-bin/model-tides-${{ matrix.family }}-*
+                  path: dist-bin/model-tides-${{ matrix.platform }}-*
                   if-no-files-found: error
 
     standalone:
