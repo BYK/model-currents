@@ -6,10 +6,9 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const output = fileURLToPath(new URL('../cli/dist/', import.meta.url));
 rmSync(output, { recursive: true, force: true });
 for (const name of ['scripts', 'src']) mkdirSync(`${output}${name}`, { recursive: true });
-for (const path of [
-    'scripts/export-model-tides.py',
-    'scripts/export-history.py',
-]) copyFileSync(`${root}${path}`, `${output}${path}`);
+const scanner = readFileSync(`${root}scripts/history-scanner.mjs`, 'utf8');
+if (!scanner.includes("'../src/usage-data.ts'")) throw new Error('Missing scanner CLI import.');
+writeFileSync(`${output}scripts/history-scanner.mjs`, scanner.replace("'../src/usage-data.ts'", "'../src/usage-data.js'"));
 const source = readFileSync(`${root}scripts/contribute.mjs`, 'utf8');
 const imports = ['usage-data', 'weekly-snapshot'];
 for (const name of imports) {

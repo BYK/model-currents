@@ -3,26 +3,26 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Offline model usage timeline with local imports and shareable images.",
+  "description": "Weekly model usage charts with a local CLI for private history and sharing.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "build:standalone": "node scripts/build-standalone.mjs",
     "test": "node --experimental-strip-types --test test/*.test.mjs",
     "deploy": "cf deploy",
     "contribute": "node --experimental-strip-types scripts/contribute.mjs"
   },
   "dependencies": {
     "@resvg/resvg-wasm": "^2.6.2",
-    "brotli-wasm": "^3.0.1",
-    "sql.js": "1.14.2"
+    "brotli-wasm": "^3.0.1"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.62.3",
     "@types/node": "20.19.43",
-    "@types/sql.js": "1.4.11",
     "cf": "1.0.0-beta.10",
+    "fossilize": "0.11.0",
     "typescript": "5.8.3",
     "vite": "8.3.1"
   }

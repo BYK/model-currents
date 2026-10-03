@@ -62,7 +62,8 @@ test('offline navigation caches the app, but lets share and API pages reach the 
 
     assert.equal(await navigate('/'), cached);
     assert.equal((await navigate('/')).redirected, false, 'redirected HTML cannot answer a navigation');
-    assert.equal(await navigate('/local/'), cached, 'the private timeline stays available offline');
+    assert.equal(await navigate('/local/'), network, 'the retired route must reach the Worker redirect');
+    assert.equal(await navigate('/local'), network, 'the retired route without a slash must reach the Worker redirect');
     assert.equal(await navigate('/gist'), cached, 'the gist viewer shell stays available offline without caching gist contents');
     assert.equal(await navigate('/u/example'), network);
     assert.equal(await navigate('/api/aggregate'), network);

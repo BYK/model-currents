@@ -260,7 +260,7 @@ def export(source, root):
     result = json.dumps({"format": "model-tides", "version": 1, "source": source,
                          "events": events}, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
     if len(result) > MAX_JSON_BYTES:
-        raise ValueError("Export exceeds the browser import limit")
+        raise ValueError("Export exceeds the metadata size limit")
     return result
 
 
