@@ -41,6 +41,9 @@ test('personal OG image is a weighted, full-width weekly flow with safe labels a
     const svg = imageSvg(report);
     assert.match(svg, /width="1200" height="630" viewBox="0 0 1200 630"/);
     assert.match(svg, /Your model tide/);
+    assert.match(svg, /font-family="Iosevka Etoile, serif"/);
+    assert.match(svg, /font-family="Iosevka, monospace"/);
+    assert.match(svg, /\.flow-svg \{ font-family: 'Iosevka Aile', sans-serif;/);
     assert.match(svg, /role="img" aria-label="[^"]*self-reported[^"]*"/);
     assert.match(svg, /class="usage-chart flow-svg"[^>]*width="1[01]\d\d" height="3\d\d"/);
     assert.match(svg, /class="continuity-ribbon"/);
@@ -72,19 +75,22 @@ test('a missing week never creates a continuity ribbon or an inferred switch', (
 test('the community OG image retains its current card', () => {
     const svg = imageSvg(summarize(null, [{ week: '2026-09-07', model: 'openai/gpt-5', count: 2 }]));
     assert.match(svg, /COMMUNITY SNAPSHOT/);
+    assert.match(svg, /font-family="Iosevka Etoile, serif"/);
+    assert.match(svg, /font-family="Iosevka, monospace"/);
     assert.match(svg, /<rect x="80" y="338" width="580" height="17"/);
     assert.doesNotMatch(svg, /Your model tide|usage-chart flow-svg/);
 });
 
-test('Resvg renders the personal SVG as a 1200×630 PNG using the Worker font', async () => {
+test('Resvg renders the personal SVG and heading with the site fonts', async () => {
     const wasm = await readFile(new URL('../node_modules/@resvg/resvg-wasm/index_bg.wasm', import.meta.url));
-    const font = await readFile(new URL('../worker/og-font.ttf', import.meta.url));
+    const fonts = await Promise.all(['iosevka-aile', 'iosevka-etoile', 'iosevka'].map((family) =>
+        readFile(new URL(`../src/fonts/${family}-site-400.woff2`, import.meta.url))));
     await initWasm(wasm);
     const source = imageSvg(summarize('019ff796-7912-7786-a7bf-a964d071294a', [
         { week: '2026-09-07', model: '<model & me>', count: 3 },
         { week: '2026-09-14', model: '<model & me>', count: 9 },
     ]));
-    const svg = new Resvg(source, { font: { fontBuffers: [font], defaultFontFamily: 'Noto Sans Mono' } });
+    const svg = new Resvg(source, { font: { fontBuffers: fonts, loadSystemFonts: false, defaultFontFamily: 'Iosevka Aile' } });
     try {
         const image = svg.render();
         try {
@@ -92,6 +98,14 @@ test('Resvg renders the personal SVG as a 1200×630 PNG using the Worker font', 
             assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
             assert.equal(png.readUInt32BE(16), 1200);
             assert.equal(png.readUInt32BE(20), 630);
+            const titlePixels = image.pixels;
+            const paintedTitlePixels = Array.from({ length: 45 * 660 }, (_, index) => {
+                const x = 60 + index % 660;
+                const y = 58 + Math.floor(index / 660);
+                const offset = (y * 1200 + x) * 4;
+                return titlePixels[offset] !== 16 || titlePixels[offset + 1] !== 40 || titlePixels[offset + 2] !== 50;
+            }).filter(Boolean).length;
+            assert.ok(paintedTitlePixels > 100, 'the title must use a bundled font and render visibly');
             const node = source.match(/<rect class="usage-node" x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"/);
             assert.ok(node);
             const x = Math.floor(60 + Number(node[1]) + Number(node[3]) / 2);

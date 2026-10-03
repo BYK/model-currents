@@ -3,7 +3,7 @@ declare module '*?module' {
     export default module;
 }
 
-declare module '*.ttf?inline' {
+declare module '*.woff2?inline' {
     const dataUrl: string;
     export default dataUrl;
 }
